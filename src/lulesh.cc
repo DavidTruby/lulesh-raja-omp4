@@ -1153,13 +1153,11 @@ RAJA_STORAGE void CalcForceForNodes(Domain domain)
            true, false) ;
 #endif  
 
-  enter_data(numNode, &domain.fx(0), &domain.fy(0), &domain.fz(0));
   RAJA::forall<node_exec_policy>(0, numNode, [=] (int i) {
      domain.fx(i) = Real_t(0.0) ;
      domain.fy(i) = Real_t(0.0) ;
      domain.fz(i) = Real_t(0.0) ;
   } );
-  exit_data(numNode, &domain.fx(0), &domain.fy(0), &domain.fz(0));
 
   /* Calcforce calls partial, force, hourq */
   CalcVolumeForceForElems(domain) ;
