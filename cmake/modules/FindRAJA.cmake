@@ -7,7 +7,7 @@ set(RAJA_CXX_FEATURES cxx_auto_type cxx_constexpr cxx_generic_lambdas)
 find_path(RAJA_INCLUDE_DIR RAJA/RAJA.hpp
   HINTS ${RAJA_ROOT}/include $ENV{RAJA_ROOT}/include)
 find_library(RAJA_LIBRARY NAMES RAJA libRAJA
-  HINTS ${RAJA_ROOT}/lib)
+  HINTS ${RAJA_ROOT}/lib $ENV{RAJA_ROOT}/lib)
 
 include(FindPackageHandleStandardArgs)
 find_package_handle_standard_args(RAJA DEFAULT_MSG RAJA_LIBRARY RAJA_INCLUDE_DIR)
