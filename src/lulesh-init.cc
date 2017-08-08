@@ -195,7 +195,7 @@ Domain::Domain(Int_t numRanks, Index_t colLoc,
 
 
 ////////////////////////////////////////////////////////////////////////////////
-Domain::~Domain()
+/*Domain::~Domain()
 {
    delete [] m_regNumList;
    delete [] m_nodeElemStart;
@@ -211,7 +211,7 @@ Domain::~Domain()
    delete [] commDataRecv;
 #endif
 } // End destructor
-
+*/
 
 ////////////////////////////////////////////////////////////////////////////////
 void
