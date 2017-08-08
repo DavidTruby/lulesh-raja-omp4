@@ -41,7 +41,6 @@
 #
 ###############################################################################
 
-add_definitions(-DUSE_MPI=0 -DUSE_OMP=1)
 add_executable(lulesh
   lulesh.cc
   lulesh-comm.cc
@@ -49,3 +48,6 @@ add_executable(lulesh
   lulesh-util.cc
   lulesh-viz.cc)
 target_link_libraries(lulesh RAJA)
+set_target_properties(lulesh PROPERTIES LINK_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+target_compile_options(lulesh PUBLIC ${OpenMP_CXX_FLAGS})
+target_compile_definitions(lulesh PUBLIC -DUSE_MPI=0 -DUSE_OMP=1)
