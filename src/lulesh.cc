@@ -158,6 +158,9 @@ Additional BSD Notice
 
 #if USE_OMP
 # include <omp.h>
+// uncomment the following the build subset of loops with common 'parallel for'
+// loops instead of raja
+#define PLAIN_OMP_LOOPS
 #endif
 
 #include "lulesh.h"
@@ -1153,13 +1156,13 @@ RAJA_STORAGE void CalcForceForNodes(Domain domain)
            true, false) ;
 #endif  
 
-  enter_data(numNode, &domain.fx(0), &domain.fy(0), &domain.fz(0));
+  // enter_data(numNode, &domain.fx(0), &domain.fy(0), &domain.fz(0));
   RAJA::forall<node_exec_policy>(0, numNode, [=] (int i) {
      domain.fx(i) = Real_t(0.0) ;
      domain.fy(i) = Real_t(0.0) ;
      domain.fz(i) = Real_t(0.0) ;
   } );
-  exit_data(numNode, &domain.fx(0), &domain.fy(0), &domain.fz(0));
+  //exit_data(numNode, &domain.fx(0), &domain.fy(0), &domain.fz(0));
 
   /* Calcforce calls partial, force, hourq */
   CalcVolumeForceForElems(domain) ;
@@ -1615,6 +1618,7 @@ void CalcLagrangeElements(Domain domain)
       CalcKinematicsForElems(&domain, deltatime, numElem) ;
 
       // element loop to do some stuff not included in the elemlib function.
+#ifndef PLAIN_OMP_LOOPS    
       RAJA::forall<elem_exec_policy>(0, numElem, [=] (int k) {
          // calc strain rate and apply as constraint (only done in FB element)
          Real_t vdov = domain.dxx(k) + domain.dyy(k) + domain.dzz(k) ;
@@ -1625,7 +1629,27 @@ void CalcLagrangeElements(Domain domain)
          domain.dxx(k) -= vdovthird ;
          domain.dyy(k) -= vdovthird ;
          domain.dzz(k) -= vdovthird ;
+	} );
+#else
+      Real_t *dxx = &domain.dxx(0);
+      Real_t *dyy = &domain.dyy(0);
+      Real_t *dzz = &domain.dzz(0);
+      Real_t *vdov_v = &domain.vdov(0);
 
+      for(int k = 0 ; k < numElem ; k++) {
+	// calc strain rate and apply as constraint (only done in FB element)
+	Real_t vdov = dxx[k] + dyy[k] + dzz[k];
+	Real_t vdovthird = vdov/Real_t(3.0) ;
+	
+	// make the rate of deformation tensor deviatoric
+	vdov_v[k] = vdov ;
+	dxx[k] -= vdovthird ;
+	dyy[k] -= vdovthird ;
+	dzz[k] -= vdovthird ;
+      }
+#endif
+
+      RAJA::forall<elem_exec_policy>(0, numElem, [=] (int k) {
         // See if any volumes are negative, and take appropriate action.
          if (domain.vnew(k) <= Real_t(0.0))
         {
