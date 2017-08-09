@@ -828,7 +828,8 @@ void CalcFBHourglassForceForElems( Domain* domain,
 /*************************************************/
 /*    compute the hourglass modes */
 
-
+// hard to port
+//#ifndef PLAIN_OMP_LOOPS
    RAJA::forall<elem_exec_policy>(0, numElem, [=] (int i2) {
       Real_t *fx_local, *fy_local, *fz_local ;
       Real_t hgfx[8], hgfy[8], hgfz[8] ;
@@ -1012,7 +1013,204 @@ void CalcFBHourglassForceForElems( Domain* domain,
          domain->fz(n7si2) += hgfz[7];
       }
    } );
+   //#else
+#if 0
+   Index_t *nodelist = domain->nodelist(0);
+   Real_t *ss = &domain->ss(0);
+   Real_t *elemMass = &domain->elemMass(0);
+   Real_t *xd = &domain->xd(0);
+   Real_t *yd = &domain->yd(0);
+   Real_t *zd = &domain->zd(0);
+   Real_t *fx = &domain->fx(0);
+   Real_t *fy = &domain->fy(0);
+   Real_t *fz = &domain->fz(0);
 
+   #pragma omp parallel for
+   for (int i2 = 0 ; i2 < numElem ; i2++) {
+      Real_t *fx_local, *fy_local, *fz_local ;
+      Real_t hgfx[8], hgfy[8], hgfz[8] ;
+
+      Real_t coefficient;
+
+      Real_t hourgam[8][4];
+      Real_t xd1[8], yd1[8], zd1[8] ;
+
+      Index_t *elemToNode = &nodelist[i2];
+      Index_t i3=8*i2;
+      Real_t volinv=Real_t(1.0)/determ[i2];
+      Real_t ss1, mass1, volume13 ;
+      for(Index_t i1=0;i1<4;++i1){
+
+         Real_t hourmodx =
+            x8n[i3] * gamma[i1][0] + x8n[i3+1] * gamma[i1][1] +
+            x8n[i3+2] * gamma[i1][2] + x8n[i3+3] * gamma[i1][3] +
+            x8n[i3+4] * gamma[i1][4] + x8n[i3+5] * gamma[i1][5] +
+            x8n[i3+6] * gamma[i1][6] + x8n[i3+7] * gamma[i1][7];
+
+         Real_t hourmody =
+            y8n[i3] * gamma[i1][0] + y8n[i3+1] * gamma[i1][1] +
+            y8n[i3+2] * gamma[i1][2] + y8n[i3+3] * gamma[i1][3] +
+            y8n[i3+4] * gamma[i1][4] + y8n[i3+5] * gamma[i1][5] +
+            y8n[i3+6] * gamma[i1][6] + y8n[i3+7] * gamma[i1][7];
+
+         Real_t hourmodz =
+            z8n[i3] * gamma[i1][0] + z8n[i3+1] * gamma[i1][1] +
+            z8n[i3+2] * gamma[i1][2] + z8n[i3+3] * gamma[i1][3] +
+            z8n[i3+4] * gamma[i1][4] + z8n[i3+5] * gamma[i1][5] +
+            z8n[i3+6] * gamma[i1][6] + z8n[i3+7] * gamma[i1][7];
+
+         hourgam[0][i1] = gamma[i1][0] -  volinv*(dvdx[i3  ] * hourmodx +
+                                                  dvdy[i3  ] * hourmody +
+                                                  dvdz[i3  ] * hourmodz );
+
+         hourgam[1][i1] = gamma[i1][1] -  volinv*(dvdx[i3+1] * hourmodx +
+                                                  dvdy[i3+1] * hourmody +
+                                                  dvdz[i3+1] * hourmodz );
+
+         hourgam[2][i1] = gamma[i1][2] -  volinv*(dvdx[i3+2] * hourmodx +
+                                                  dvdy[i3+2] * hourmody +
+                                                  dvdz[i3+2] * hourmodz );
+
+         hourgam[3][i1] = gamma[i1][3] -  volinv*(dvdx[i3+3] * hourmodx +
+                                                  dvdy[i3+3] * hourmody +
+                                                  dvdz[i3+3] * hourmodz );
+
+         hourgam[4][i1] = gamma[i1][4] -  volinv*(dvdx[i3+4] * hourmodx +
+                                                  dvdy[i3+4] * hourmody +
+                                                  dvdz[i3+4] * hourmodz );
+
+         hourgam[5][i1] = gamma[i1][5] -  volinv*(dvdx[i3+5] * hourmodx +
+                                                  dvdy[i3+5] * hourmody +
+                                                  dvdz[i3+5] * hourmodz );
+
+         hourgam[6][i1] = gamma[i1][6] -  volinv*(dvdx[i3+6] * hourmodx +
+                                                  dvdy[i3+6] * hourmody +
+                                                  dvdz[i3+6] * hourmodz );
+
+         hourgam[7][i1] = gamma[i1][7] -  volinv*(dvdx[i3+7] * hourmodx +
+                                                  dvdy[i3+7] * hourmody +
+                                                  dvdz[i3+7] * hourmodz );
+
+      }
+
+      /* compute forces */
+      /* store forces into h arrays (force arrays) */
+
+      ss1=ss[i2];
+      mass1=elemMass[i2];
+      volume13=CBRT(determ[i2]);
+
+      Index_t n0si2 = elemToNode[0];
+      Index_t n1si2 = elemToNode[1];
+      Index_t n2si2 = elemToNode[2];
+      Index_t n3si2 = elemToNode[3];
+      Index_t n4si2 = elemToNode[4];
+      Index_t n5si2 = elemToNode[5];
+      Index_t n6si2 = elemToNode[6];
+      Index_t n7si2 = elemToNode[7];
+
+      xd1[0] = xd[n0si2];
+      xd1[1] = xd[n1si2];
+      xd1[2] = xd[n2si2];
+      xd1[3] = xd[n3si2];
+      xd1[4] = xd[n4si2];
+      xd1[5] = xd[n5si2];
+      xd1[6] = xd[n6si2];
+      xd1[7] = xd[n7si2];
+
+      yd1[0] = yd[n0si2];
+      yd1[1] = yd[n1si2];
+      yd1[2] = yd[n2si2];
+      yd1[3] = yd[n3si2];
+      yd1[4] = yd[n4si2];
+      yd1[5] = yd[n5si2];
+      yd1[6] = yd[n6si2];
+      yd1[7] = yd[n7si2];
+
+      zd1[0] = zd[n0si2];
+      zd1[1] = zd[n1si2];
+      zd1[2] = zd[n2si2];
+      zd1[3] = zd[n3si2];
+      zd1[4] = zd[n4si2];
+      zd1[5] = zd[n5si2];
+      zd1[6] = zd[n6si2];
+      zd1[7] = zd[n7si2];
+
+      coefficient = - hourg * Real_t(0.01) * ss1 * mass1 / volume13;
+
+      CalcElemFBHourglassForce(xd1,yd1,zd1,
+                      hourgam,
+                      coefficient, hgfx, hgfy, hgfz);
+
+      // With the threaded version, we write into local arrays per elem
+      // so we don't have to worry about race conditions
+      if (numthreads > 1) {
+         fx_local = &fx_elem[i3] ;
+         fx_local[0] = hgfx[0];
+         fx_local[1] = hgfx[1];
+         fx_local[2] = hgfx[2];
+         fx_local[3] = hgfx[3];
+         fx_local[4] = hgfx[4];
+         fx_local[5] = hgfx[5];
+         fx_local[6] = hgfx[6];
+         fx_local[7] = hgfx[7];
+
+         fy_local = &fy_elem[i3] ;
+         fy_local[0] = hgfy[0];
+         fy_local[1] = hgfy[1];
+         fy_local[2] = hgfy[2];
+         fy_local[3] = hgfy[3];
+         fy_local[4] = hgfy[4];
+         fy_local[5] = hgfy[5];
+         fy_local[6] = hgfy[6];
+         fy_local[7] = hgfy[7];
+
+         fz_local = &fz_elem[i3] ;
+         fz_local[0] = hgfz[0];
+         fz_local[1] = hgfz[1];
+         fz_local[2] = hgfz[2];
+         fz_local[3] = hgfz[3];
+         fz_local[4] = hgfz[4];
+         fz_local[5] = hgfz[5];
+         fz_local[6] = hgfz[6];
+         fz_local[7] = hgfz[7];
+      }
+      else {
+         fx[n0si2] += hgfx[0];
+         fy[n0si2] += hgfy[0];
+         fz[n0si2] += hgfz[0];
+
+         fx[n1si2] += hgfx[1];
+         fy[n1si2] += hgfy[1];
+         fz[n1si2] += hgfz[1];
+
+         fx[n2si2] += hgfx[2];
+         fy[n2si2] += hgfy[2];
+         fz[n2si2] += hgfz[2];
+
+         fx[n3si2] += hgfx[3];
+         fy[n3si2] += hgfy[3];
+         fz[n3si2] += hgfz[3];
+
+         fx[n4si2] += hgfx[4];
+         fy[n4si2] += hgfy[4];
+         fz[n4si2] += hgfz[4];
+
+         fx[n5si2] += hgfx[5];
+         fy[n5si2] += hgfy[5];
+         fz[n5si2] += hgfz[5];
+
+         fx[n6si2] += hgfx[6];
+         fy[n6si2] += hgfy[6];
+         fz[n6si2] += hgfz[6];
+
+         fx[n7si2] += hgfx[7];
+         fy[n7si2] += hgfy[7];
+         fz[n7si2] += hgfz[7];
+      }
+   }
+#endif // hard to port
+   //#endif
    if (numthreads > 1) {
      // Collect the data from the local arrays into the final force arrays
       RAJA::forall<node_exec_policy>(0, numNode, [=] (int gnode) {
@@ -1669,6 +1867,7 @@ void CalcMonotonicQGradientsForElems(Domain* domain)
 {
    Index_t numElem = domain->numElem();
 
+#ifndef PLAIN_OMP_LOOPS
    RAJA::forall<elem_exec_policy>(0, numElem, [=] (int i) {
       const Real_t ptiny = Real_t(1.e-36) ;
       Real_t ax,ay,az ;
@@ -1807,6 +2006,165 @@ void CalcMonotonicQGradientsForElems(Domain* domain)
 
       domain->delv_eta(i) = ax*dxv + ay*dyv + az*dzv ;
    } );
+#else
+   const Index_t *nodelist = domain->nodelist(0);
+   Real_t *x = &domain->x(0);
+   Real_t *y = &domain->y(0);
+   Real_t *z = &domain->z(0);
+   Real_t *xd = &domain->xd(0);
+   Real_t *yd = &domain->yd(0);
+   Real_t *zd = &domain->zd(0);
+   Real_t *volo = &domain->volo(0);
+   Real_t *vnew = &domain->vnew(0);
+   Real_t *delx_zeta = &domain->delx_zeta(0);
+   Real_t *delv_zeta = &domain->delv_zeta(0);
+   Real_t *delx_xi = &domain->delx_xi(0);
+   Real_t *delv_xi = &domain->delv_xi(0);
+   Real_t *delx_eta = &domain->delx_eta(0);
+   Real_t *delv_eta = &domain->delv_eta(0);
+
+   #pragma omp parallel for
+   for (int i = 0 ; i < numElem ; i++) {
+      const Real_t ptiny = Real_t(1.e-36) ;
+      Real_t ax,ay,az ;
+      Real_t dxv,dyv,dzv ;
+
+      //const Index_t *elemToNode = domain->nodelist(i);
+      // duplicating content of nodelist function
+      const Index_t *elemToNode = &nodelist[Index_t(8)*i];
+      Index_t n0 = elemToNode[0] ;
+      Index_t n1 = elemToNode[1] ;
+      Index_t n2 = elemToNode[2] ;
+      Index_t n3 = elemToNode[3] ;
+      Index_t n4 = elemToNode[4] ;
+      Index_t n5 = elemToNode[5] ;
+      Index_t n6 = elemToNode[6] ;
+      Index_t n7 = elemToNode[7] ;
+
+      Real_t x0 = x[n0] ;
+      Real_t x1 = x[n1] ;
+      Real_t x2 = x[n2] ;
+      Real_t x3 = x[n3] ;
+      Real_t x4 = x[n4] ;
+      Real_t x5 = x[n5] ;
+      Real_t x6 = x[n6] ;
+      Real_t x7 = x[n7] ;
+
+      Real_t y0 = y[n0] ;
+      Real_t y1 = y[n1] ;
+      Real_t y2 = y[n2] ;
+      Real_t y3 = y[n3] ;
+      Real_t y4 = y[n4] ;
+      Real_t y5 = y[n5] ;
+      Real_t y6 = y[n6] ;
+      Real_t y7 = y[n7] ;
+
+      Real_t z0 = z[n0] ;
+      Real_t z1 = z[n1] ;
+      Real_t z2 = z[n2] ;
+      Real_t z3 = z[n3] ;
+      Real_t z4 = z[n4] ;
+      Real_t z5 = z[n5] ;
+      Real_t z6 = z[n6] ;
+      Real_t z7 = z[n7] ;
+
+      Real_t xv0 = xd[n0] ;
+      Real_t xv1 = xd[n1] ;
+      Real_t xv2 = xd[n2] ;
+      Real_t xv3 = xd[n3] ;
+      Real_t xv4 = xd[n4] ;
+      Real_t xv5 = xd[n5] ;
+      Real_t xv6 = xd[n6] ;
+      Real_t xv7 = xd[n7] ;
+
+      Real_t yv0 = yd[n0] ;
+      Real_t yv1 = yd[n1] ;
+      Real_t yv2 = yd[n2] ;
+      Real_t yv3 = yd[n3] ;
+      Real_t yv4 = yd[n4] ;
+      Real_t yv5 = yd[n5] ;
+      Real_t yv6 = yd[n6] ;
+      Real_t yv7 = yd[n7] ;
+
+      Real_t zv0 = zd[n0] ;
+      Real_t zv1 = zd[n1] ;
+      Real_t zv2 = zd[n2] ;
+      Real_t zv3 = zd[n3] ;
+      Real_t zv4 = zd[n4] ;
+      Real_t zv5 = zd[n5] ;
+      Real_t zv6 = zd[n6] ;
+      Real_t zv7 = zd[n7] ;
+
+      Real_t vol = volo[i]*vnew[i] ;
+      Real_t norm = Real_t(1.0) / ( vol + ptiny ) ;
+
+      Real_t dxj = Real_t(-0.25)*((x0+x1+x5+x4) - (x3+x2+x6+x7)) ;
+      Real_t dyj = Real_t(-0.25)*((y0+y1+y5+y4) - (y3+y2+y6+y7)) ;
+      Real_t dzj = Real_t(-0.25)*((z0+z1+z5+z4) - (z3+z2+z6+z7)) ;
+
+      Real_t dxi = Real_t( 0.25)*((x1+x2+x6+x5) - (x0+x3+x7+x4)) ;
+      Real_t dyi = Real_t( 0.25)*((y1+y2+y6+y5) - (y0+y3+y7+y4)) ;
+      Real_t dzi = Real_t( 0.25)*((z1+z2+z6+z5) - (z0+z3+z7+z4)) ;
+
+      Real_t dxk = Real_t( 0.25)*((x4+x5+x6+x7) - (x0+x1+x2+x3)) ;
+      Real_t dyk = Real_t( 0.25)*((y4+y5+y6+y7) - (y0+y1+y2+y3)) ;
+      Real_t dzk = Real_t( 0.25)*((z4+z5+z6+z7) - (z0+z1+z2+z3)) ;
+
+      /* find delvk and delxk ( i cross j ) */
+
+      ax = dyi*dzj - dzi*dyj ;
+      ay = dzi*dxj - dxi*dzj ;
+      az = dxi*dyj - dyi*dxj ;
+
+      delx_zeta[i] = vol / SQRT(ax*ax + ay*ay + az*az + ptiny) ;
+
+      ax *= norm ;
+      ay *= norm ;
+      az *= norm ;
+
+      dxv = Real_t(0.25)*((xv4+xv5+xv6+xv7) - (xv0+xv1+xv2+xv3)) ;
+      dyv = Real_t(0.25)*((yv4+yv5+yv6+yv7) - (yv0+yv1+yv2+yv3)) ;
+      dzv = Real_t(0.25)*((zv4+zv5+zv6+zv7) - (zv0+zv1+zv2+zv3)) ;
+
+      delv_zeta[i] = ax*dxv + ay*dyv + az*dzv ;
+
+      /* find delxi and delvi ( j cross k ) */
+
+      ax = dyj*dzk - dzj*dyk ;
+      ay = dzj*dxk - dxj*dzk ;
+      az = dxj*dyk - dyj*dxk ;
+
+      delx_xi[i] = vol / SQRT(ax*ax + ay*ay + az*az + ptiny) ;
+
+      ax *= norm ;
+      ay *= norm ;
+      az *= norm ;
+
+      dxv = Real_t(0.25)*((xv1+xv2+xv6+xv5) - (xv0+xv3+xv7+xv4)) ;
+      dyv = Real_t(0.25)*((yv1+yv2+yv6+yv5) - (yv0+yv3+yv7+yv4)) ;
+      dzv = Real_t(0.25)*((zv1+zv2+zv6+zv5) - (zv0+zv3+zv7+zv4)) ;
+
+      delv_xi[i] = ax*dxv + ay*dyv + az*dzv ;
+
+      /* find delxj and delvj ( k cross i ) */
+
+      ax = dyk*dzi - dzk*dyi ;
+      ay = dzk*dxi - dxk*dzi ;
+      az = dxk*dyi - dyk*dxi ;
+
+      delx_eta[i] = vol / SQRT(ax*ax + ay*ay + az*az + ptiny) ;
+
+      ax *= norm ;
+      ay *= norm ;
+      az *= norm ;
+
+      dxv = Real_t(-0.25)*((xv0+xv1+xv5+xv4) - (xv3+xv2+xv6+xv7)) ;
+      dyv = Real_t(-0.25)*((yv0+yv1+yv5+yv4) - (yv3+yv2+yv6+yv7)) ;
+      dzv = Real_t(-0.25)*((zv0+zv1+zv5+zv4) - (zv3+zv2+zv6+zv7)) ;
+
+      delv_eta[i] = ax*dxv + ay*dyv + az*dzv ;
+   }
+#endif
 }
 
 /******************************************/
@@ -1819,7 +2177,7 @@ void CalcMonotonicQRegionForElems(Domain* domain, Int_t r,
    Real_t monoq_max_slope = domain->monoq_max_slope();
    Real_t qlc_monoq = domain->qlc_monoq();
    Real_t qqc_monoq = domain->qqc_monoq();
-
+#ifndef PLAIN_OMP_LOOPS
    RAJA::forall<mat_exec_policy>(0, domain->regElemSize(r), [=] (int i) { 
       Index_t ielem = domain->regElemlist(r,i);
       Real_t qlin, qquad ;
@@ -1970,6 +2328,186 @@ void CalcMonotonicQRegionForElems(Domain* domain, Int_t r,
       domain->qq(ielem) = qquad ;
       domain->ql(ielem) = qlin  ;
    } );
+#else
+   Index_t regElemSize = domain->regElemSize(r);
+   Index_t *regElemList_r = domain->regElemlist(r);
+   Real_t *delv_xi = &domain->delv_xi(0);
+   Real_t *delx_xi = &domain->delx_xi(0);
+   Index_t *elemBC = &domain->elemBC(0);
+   Index_t *lxim = &domain->lxim(0);
+   Index_t *lxip = &domain->lxip(0);
+   Real_t *delv_eta = &domain->delv_eta(0);
+   Real_t *delx_eta = &domain->delx_eta(0);
+   Index_t *letam = &domain->letam(0);
+   Index_t *letap = &domain->letap(0);
+   Real_t *delv_zeta = &domain->delv_zeta(0);
+   Real_t *delx_zeta = &domain->delx_zeta(0);
+   Index_t *lzetam = &domain->lzetam(0);
+   Index_t *lzetap = &domain->lzetap(0);
+   Real_t *vdov = &domain->vdov(0);
+   Real_t *volo = &domain->volo(0);
+   Real_t *elemMass = &domain->elemMass(0);
+   Real_t *vnew = &domain->vnew(0);
+   Real_t *qq = &domain->qq(0);
+   Real_t *ql = &domain->ql(0);
+
+   #pragma omp parallel for
+   for (int i = 0 ; i < regElemSize ; i++) {
+      Index_t ielem = regElemList_r[i];
+      Real_t qlin, qquad ;
+      Real_t phixi, phieta, phizeta ;
+      Int_t bcMask = elemBC[ielem] ;
+      Real_t delvm = 0.0, delvp =0.0;
+
+      /*  phixi     */
+      Real_t norm = Real_t(1.) / (delv_xi[ielem]+ ptiny ) ;
+
+      switch (bcMask & XI_M) {
+         case XI_M_COMM: /* needs comm data */
+         case 0:         delvm = delv_xi[lxim[ielem]]; break ;
+         case XI_M_SYMM: delvm = delv_xi[ielem] ;       break ;
+         case XI_M_FREE: delvm = Real_t(0.0) ;      break ;
+         default://          fprintf(stderr, "Error in switch at %s line %d\n",
+	//                   __FILE__, __LINE__);
+            delvm = 0; /* ERROR - but quiets the compiler */
+            break;
+      }
+      switch (bcMask & XI_P) {
+         case XI_P_COMM: /* needs comm data */
+         case 0:         delvp = delv_xi[lxip[ielem]] ; break ;
+         case XI_P_SYMM: delvp = delv_xi[ielem] ;       break ;
+         case XI_P_FREE: delvp = Real_t(0.0) ;      break ;
+         default: 
+	   //         fprintf(stderr, "Error in switch at %s line %d\n",
+	   //                      __FILE__, __LINE__);
+            delvp = 0; /* ERROR - but quiets the compiler */
+            break;
+      }
+
+      delvm = delvm * norm ;
+      delvp = delvp * norm ;
+
+      phixi = Real_t(.5) * ( delvm + delvp ) ;
+
+      delvm *= monoq_limiter_mult ;
+      delvp *= monoq_limiter_mult ;
+
+      if ( delvm < phixi ) phixi = delvm ;
+      if ( delvp < phixi ) phixi = delvp ;
+      if ( phixi < Real_t(0.)) phixi = Real_t(0.) ;
+      if ( phixi > monoq_max_slope) phixi = monoq_max_slope;
+
+
+      /*  phieta     */
+      norm = Real_t(1.) / ( delv_eta[ielem] + ptiny ) ;
+
+      switch (bcMask & ETA_M) {
+         case ETA_M_COMM: /* needs comm data */
+         case 0:          delvm = delv_eta[letam[ielem]] ; break ;
+         case ETA_M_SYMM: delvm = delv_eta[ielem] ;        break ;
+         case ETA_M_FREE: delvm = Real_t(0.0) ;        break ;
+         default: 
+	   //         fprintf(stderr, "Error in switch at %s line %d\n",
+	   //                      __FILE__, __LINE__);
+            delvm = 0; /* ERROR - but quiets the compiler */
+            break;
+      }
+      switch (bcMask & ETA_P) {
+         case ETA_P_COMM: /* needs comm data */
+         case 0:          delvp = delv_eta[letap[ielem]] ; break ;
+         case ETA_P_SYMM: delvp = delv_eta[ielem] ;        break ;
+         case ETA_P_FREE: delvp = Real_t(0.0) ;        break ;
+         default: 
+	   //         fprintf(stderr, "Error in switch at %s line %d\n",
+	   //                      __FILE__, __LINE__);
+            delvp = 0; /* ERROR - but quiets the compiler */
+            break;
+      }
+
+      delvm = delvm * norm ;
+      delvp = delvp * norm ;
+
+      phieta = Real_t(.5) * ( delvm + delvp ) ;
+
+      delvm *= monoq_limiter_mult ;
+      delvp *= monoq_limiter_mult ;
+
+      if ( delvm  < phieta ) phieta = delvm ;
+      if ( delvp  < phieta ) phieta = delvp ;
+      if ( phieta < Real_t(0.)) phieta = Real_t(0.) ;
+      if ( phieta > monoq_max_slope)  phieta = monoq_max_slope;
+
+      /*  phizeta     */
+      norm = Real_t(1.) / ( delv_zeta[ielem] + ptiny ) ;
+
+      switch (bcMask & ZETA_M) {
+         case ZETA_M_COMM: /* needs comm data */
+         case 0:           delvm = delv_zeta[lzetam[ielem]] ; break ;
+         case ZETA_M_SYMM: delvm = delv_zeta[ielem] ;         break ;
+         case ZETA_M_FREE: delvm = Real_t(0.0) ;          break ;
+         default:         
+	   //fprintf(stderr, "Error in switch at %s line %d\n",
+	   //                      __FILE__, __LINE__);
+            delvm = 0; /* ERROR - but quiets the compiler */
+            break;
+      }
+      switch (bcMask & ZETA_P) {
+         case ZETA_P_COMM: /* needs comm data */
+         case 0:           delvp = delv_zeta[lzetap[ielem]] ; break ;
+         case ZETA_P_SYMM: delvp = delv_zeta[ielem] ;         break ;
+         case ZETA_P_FREE: delvp = Real_t(0.0) ;          break ;
+         default:         
+	   //fprintf(stderr, "Error in switch at %s line %d\n",
+	   //                      __FILE__, __LINE__);
+            delvp = 0; /* ERROR - but quiets the compiler */
+            break;
+      }
+
+      delvm = delvm * norm ;
+      delvp = delvp * norm ;
+
+      phizeta = Real_t(.5) * ( delvm + delvp ) ;
+
+      delvm *= monoq_limiter_mult ;
+      delvp *= monoq_limiter_mult ;
+
+      if ( delvm   < phizeta ) phizeta = delvm ;
+      if ( delvp   < phizeta ) phizeta = delvp ;
+      if ( phizeta < Real_t(0.)) phizeta = Real_t(0.);
+      if ( phizeta > monoq_max_slope  ) phizeta = monoq_max_slope;
+
+      /* Remove length scale */
+
+      if ( vdov[ielem] > Real_t(0.) )  {
+         qlin  = Real_t(0.) ;
+         qquad = Real_t(0.) ;
+      }
+      else {
+         Real_t delvxxi   = delv_xi[ielem]   * delx_xi[ielem]   ;
+         Real_t delvxeta  = delv_eta[ielem]  * delx_eta[ielem]  ;
+         Real_t delvxzeta = delv_zeta[ielem] * delx_zeta[ielem] ;
+
+         if ( delvxxi   > Real_t(0.) ) delvxxi   = Real_t(0.) ;
+         if ( delvxeta  > Real_t(0.) ) delvxeta  = Real_t(0.) ;
+         if ( delvxzeta > Real_t(0.) ) delvxzeta = Real_t(0.) ;
+
+         Real_t rho = elemMass[ielem] / (volo[ielem] * vnew[ielem]) ;
+
+         qlin = -qlc_monoq * rho *
+            (  delvxxi   * (Real_t(1.) - phixi) +
+               delvxeta  * (Real_t(1.) - phieta) +
+               delvxzeta * (Real_t(1.) - phizeta)  ) ;
+
+         qquad = qqc_monoq * rho *
+            (  delvxxi*delvxxi     * (Real_t(1.) - phixi*phixi) +
+               delvxeta*delvxeta   * (Real_t(1.) - phieta*phieta) +
+               delvxzeta*delvxzeta * (Real_t(1.) - phizeta*phizeta)  ) ;
+      }
+
+      qq[ielem] = qquad ;
+      ql[ielem] = qlin  ;
+   }
+#endif
 }
 
 /******************************************/
@@ -2077,6 +2615,7 @@ void CalcPressureForElems(Real_t* p_new, Real_t* bvc,
       pbvc[i] = c1s;
    } );
 
+#ifndef PLAIN_OMP_LOOPS
    RAJA::forall<mat_exec_policy>(0, length, [=] (int i) { 
       Index_t ielem = regElemList[i];
       
@@ -2091,6 +2630,24 @@ void CalcPressureForElems(Real_t* p_new, Real_t* bvc,
       if    (p_new[i]       <  pmin)
          p_new[i]   = pmin ;
    } );
+#else
+   // no domain capture here
+   #pragma omp parallel for
+   for (int i = 0 ; i < length ; i++) {
+     Index_t ielem = regElemList[i];
+     
+     p_new[i] = bvc[i] * e_old[i] ;
+     
+     if    (FABS(p_new[i]) <  p_cut   )
+       p_new[i] = Real_t(0.0) ;
+     
+     if    ( vnewc[ielem] >= eosvmax ) /* impossible condition here? */
+       p_new[i] = Real_t(0.0) ;
+     
+     if    (p_new[i]       <  pmin)
+       p_new[i]   = pmin ;
+   }
+#endif   
 }
 
 /******************************************/
