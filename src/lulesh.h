@@ -287,20 +287,23 @@ class Domain {
    Index_t&  regNumList(Index_t idx) { return m_regNumList[idx] ; }
    Index_t*  regNumList()            { return &m_regNumList[0] ; }
    Index_t*  regElemlist(Int_t r)    { return m_regElemlist[r] ; }
-   Index_t&  regElemlist(Int_t r, Index_t idx) { return m_regElemlist[r][idx] ; }
+   // added const here
+   Index_t&  regElemlist(Int_t r, Index_t idx) const { return m_regElemlist[r][idx] ; }   
 
    Index_t*  nodelist(Index_t idx) const    { return &m_nodelist[Index_t(8)*idx] ; }
 
    // elem connectivities through face
-   Index_t&  lxim(Index_t idx) { return m_lxim[idx] ; }
-   Index_t&  lxip(Index_t idx) { return m_lxip[idx] ; }
-   Index_t&  letam(Index_t idx) { return m_letam[idx] ; }
-   Index_t&  letap(Index_t idx) { return m_letap[idx] ; }
-   Index_t&  lzetam(Index_t idx) { return m_lzetam[idx] ; }
-   Index_t&  lzetap(Index_t idx) { return m_lzetap[idx] ; }
+   // added const here
+   Index_t&  lxim(Index_t idx) const { return m_lxim[idx] ; }
+   Index_t&  lxip(Index_t idx) const { return m_lxip[idx] ; }
+   Index_t&  letam(Index_t idx) const { return m_letam[idx] ; }
+   Index_t&  letap(Index_t idx) const { return m_letap[idx] ; }
+   Index_t&  lzetam(Index_t idx) const { return m_lzetam[idx] ; }
+   Index_t&  lzetap(Index_t idx) const { return m_lzetap[idx] ; }
 
    // elem face symm/free-surface flag
-   Int_t&  elemBC(Index_t idx) { return m_elemBC[idx] ; }
+   // added const here
+   Int_t&  elemBC(Index_t idx) const { return m_elemBC[idx] ; }
 
    // Principal strains - temporary
    Real_t& dxx(Index_t idx)  const { return m_dxx[idx] ; }
