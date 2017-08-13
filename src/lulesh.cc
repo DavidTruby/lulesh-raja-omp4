@@ -199,9 +199,9 @@ std::map<std::string, std::pair<int, double>> Timer::kernelTimes;
 // loops instead of raja
 //#define PLAIN_OMP_LOOPS
 //#define RAJA_WITH_ARRAYS
-//#define RAJA_WITH_DOMAIN
+#define RAJA_WITH_DOMAIN
 //#define RAJA_WITH_TARGET
-#define PLAIN_OMP_TARGET
+//#define PLAIN_OMP_TARGET
 #endif
 
 #include "lulesh.h"
@@ -1686,7 +1686,7 @@ void CalcLagrangeElements(Domain domain)
       enter_data(numElem,&domain.dxx(0),&domain.dyy(0),&domain.dzz(0),&domain.vdov(0));
 #endif
       {
-	Timer("CalcLagrangeElements");
+	Timer t("CalcLagrangeElements_"+std::to_string(numElem));
       // element loop to do some stuff not included in the elemlib function.
 #if defined(RAJA_WITH_DOMAIN)
       RAJA::forall<elem_exec_policy>(0, numElem, [=] (int k) {
@@ -1811,7 +1811,7 @@ void CalcMonotonicQGradientsForElems(Domain domain)
 
    {
 
-     Timer("CalcMonotonicQGradientsForElems");
+     Timer t("CalcMonotonicQGradientsForElems_"+std::to_string(numElem));
 #if defined(RAJA_WITH_DOMAIN)
    RAJA::forall<elem_exec_policy>(0, numElem, [=] (int i) {
       const Real_t ptiny = Real_t(1.e-36) ;
@@ -2613,7 +2613,7 @@ void CalcMonotonicQRegionForElems(Domain domain, Int_t r,
 
 
       {
-	Timer("CalcMonotonicQRegionForElems");
+	Timer t("CalcMonotonicQRegionForElems_"+std::to_string(domain.regElemSize(r)));
 #if defined(RAJA_WITH_DOMAIN)
    RAJA::forall<mat_exec_policy>(0, domain.regElemSize(r), [=] (int i) { 
       Index_t ielem = domain.regElemlist(r,i);
@@ -3724,7 +3724,7 @@ void CalcSoundSpeedForElems(Domain domain,
   enter_data(domain.numElem(), vnewc, &domain.ss(0));
 #endif
   {
-    Timer t("CalcSoundSpeedForElems");
+    Timer t("CalcSoundSpeedForElems_"+std::to_string(len));
 #if defined(RAJA_WITH_DOMAIN)
    RAJA::forall<mat_exec_policy>(0, len, [=] (int i) {
       Index_t ielem = regElemList[i];
