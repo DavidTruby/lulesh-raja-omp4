@@ -3716,8 +3716,10 @@ void CalcSoundSpeedForElems(Domain domain,
                             Real_t *bvc, Real_t RAJA_UNUSED_ARG(ss4o3),
                             Index_t len, Index_t *regElemList)
 {
+  if (len == 0) return;
 #if defined(PLAIN_OMP_LOOPS) || defined(RAJA_WITH_ARRAYS) || defined(PLAIN_OMP_TARGET)
   Real_t *ss = &domain.ss(0);
+  auto numElem = domain.numElem();
 #endif
 #if defined(RAJA_WITH_TARGET) || defined(PLAIN_OMP_TARGET)
   enter_data(len,regElemList,pbvc,enewc,bvc,pnewc);
@@ -3795,7 +3797,7 @@ void CalcSoundSpeedForElems(Domain domain,
 #endif
 #if defined(RAJA_WITH_TARGET) || defined(PLAIN_OMP_TARGET)
      exit_data(len,regElemList,pbvc,enewc,bvc,pnewc);
-     exit_data(domain.numElem(), vnewc, &domain.ss(0));
+     exit_data(domain.numElem(), &domain.ss(0));
 #endif
   }
 }
