@@ -199,8 +199,8 @@ std::map<std::string, std::pair<int, double>> Timer::kernelTimes;
 // loops instead of raja
 //#define PLAIN_OMP_LOOPS
 //#define RAJA_WITH_ARRAYS
-#define RAJA_WITH_DOMAIN
-//#define RAJA_WITH_TARGET
+//#define RAJA_WITH_DOMAIN
+#define RAJA_WITH_TARGET
 //#define PLAIN_OMP_TARGET
 #endif
 
