@@ -2553,7 +2553,7 @@ void CalcMonotonicQGradientsForElems(Domain domain)
 /******************************************/
 
 RAJA_STORAGE
-void CalcMonotonicQRegionForElems(Domain domain, Int_t r,
+void CalcMonotonicQRegionForElems(Domain domain,
                                   Real_t ptiny)
 {
    Real_t monoq_limiter_mult = domain.monoq_limiter_mult();
@@ -2561,9 +2561,7 @@ void CalcMonotonicQRegionForElems(Domain domain, Int_t r,
    Real_t qlc_monoq = domain.qlc_monoq();
    Real_t qqc_monoq = domain.qqc_monoq();
 
-#if defined(PLAIN_OMP_LOOPS) || defined(RAJA_WITH_ARRAYS) || defined(PLAIN_OMP_TARGET)
-   Index_t regElemSize = domain.regElemSize(r);
-   Index_t *regElemList_r = domain.regElemlist(r);
+#if defined(PLAIN_OMP_LOOPS) || defined(RAJA_WITH_ARRAYS) || defined(PLAIN_OMP_TARGET) || defined(RAJA_WITH_TARGET)
    Real_t *delv_xi = &domain.delv_xi(0);
    Real_t *delx_xi = &domain.delx_xi(0);
    Index_t *elemBC = &domain.elemBC(0);
@@ -2590,7 +2588,6 @@ void CalcMonotonicQRegionForElems(Domain domain, Int_t r,
      2*domain.sizeX()*domain.sizeY() +
      2*domain.sizeX()*domain.sizeZ() +
      2*domain.sizeY()*domain.sizeZ();
-   enter_data(domain.regElemSize(r),domain.regElemlist(r));
    enter_data(allElem,&domain.delv_xi(0), &domain.delv_eta(0), &domain.delv_zeta(0));
    enter_data(domain.numElem(),
               &domain.delx_xi(0),
@@ -2613,10 +2610,10 @@ void CalcMonotonicQRegionForElems(Domain domain, Int_t r,
 
 
       {
-	Timer t("CalcMonotonicQRegionForElems_"+std::to_string(domain.regElemSize(r)));
+    Timer t("CalcMonotonicQRegionForElems");
 #if defined(RAJA_WITH_DOMAIN)
-   RAJA::forall<mat_exec_policy>(0, domain.regElemSize(r), [=] (int i) { 
-      Index_t ielem = domain.regElemlist(r,i);
+   RAJA::forall<mat_exec_policy>(0, domain.numElem(), [=] (int i) { 
+      Index_t ielem = i;
       Real_t qlin, qquad ;
       Real_t phixi, phieta, phizeta ;
       Int_t bcMask = domain.elemBC(ielem) ;
@@ -2766,8 +2763,8 @@ void CalcMonotonicQRegionForElems(Domain domain, Int_t r,
       domain.ql(ielem) = qlin  ;
    } );
 #elif defined(RAJA_WITH_ARRAYS)
-   RAJA::forall<mat_exec_policy>(0, domain.regElemSize(r), [=] (int i) {
-      Index_t ielem = regElemList_r[i];
+   RAJA::forall<mat_exec_policy>(0, domain.numElem(), [=] (int i) {
+      Index_t ielem = i;
       Real_t qlin, qquad ;
       Real_t phixi, phieta, phizeta ;
       Int_t bcMask = elemBC[ielem] ;
@@ -2922,7 +2919,7 @@ void CalcMonotonicQRegionForElems(Domain domain, Int_t r,
       ql[ielem] = qlin  ;
    });
 #elif defined(RAJA_WITH_TARGET)
-  RAJA::forall<target_exec_policy>(0, domain.regElemSize(r), [=,regElemList_r = domain.regElemlist(r),
+   RAJA::forall<target_exec_policy>(0, domain.numElem(), [=,
                                                              delv_xi = &domain.delv_xi(0),
                                                              delx_xi = &domain.delx_xi(0),
                                                              elemBC = &domain.elemBC(0),
@@ -2942,7 +2939,7 @@ void CalcMonotonicQRegionForElems(Domain domain, Int_t r,
                                                              vnew = &domain.vnew(0),
                                                               qq = &domain.qq(0),
                                                               ql = &domain.ql(0)] (int i) {
-     Index_t ielem = regElemList_r[i];
+     Index_t ielem = i;
      Real_t qlin, qquad ;
      Real_t phixi, phieta, phizeta ;
      Int_t bcMask = elemBC[ielem] ;
@@ -3099,8 +3096,8 @@ void CalcMonotonicQRegionForElems(Domain domain, Int_t r,
 #elif defined(PLAIN_OMP_TARGET)
 
    #pragma omp target teams distribute parallel for
-   for (int i = 0 ; i < regElemSize ; i++) {
-      Index_t ielem = regElemList_r[i];
+   for (int i = 0 ; i < domain.numElem() ; i++) {
+      Index_t ielem = i;
       Real_t qlin, qquad ;
       Real_t phixi, phieta, phizeta ;
       Int_t bcMask = elemBC[ielem] ;
@@ -3258,8 +3255,8 @@ void CalcMonotonicQRegionForElems(Domain domain, Int_t r,
 #else
 
    #pragma omp parallel for
-   for (int i = 0 ; i < regElemSize ; i++) {
-      Index_t ielem = regElemList_r[i];
+   for (int i = 0 ; i < domain.numElem() ; i++) {
+       Index_t ielem = i;
       Real_t qlin, qquad ;
       Real_t phixi, phieta, phizeta ;
       Int_t bcMask = elemBC[ielem] ;
@@ -3416,7 +3413,6 @@ void CalcMonotonicQRegionForElems(Domain domain, Int_t r,
 #endif
    }
 #if defined(RAJA_WITH_TARGET) || defined(PLAIN_OMP_TARGET)
-      exit_data(domain.regElemSize(r),domain.regElemlist(r));
       exit_data(allElem,&domain.delv_xi(0), &domain.delv_eta(0), &domain.delv_zeta(0));
       exit_data(domain.numElem(),
                  &domain.delx_xi(0),
@@ -3451,11 +3447,13 @@ void CalcMonotonicQForElems(Domain* domain)
    //
    // calculate the monotonic q for all regions
    //
+   /*
    for (Index_t r=0 ; r<domain->numReg() ; ++r) {
       if (domain->regElemSize(r) > 0) {
          CalcMonotonicQRegionForElems(*domain, r, ptiny) ;
       }
-   }
+      }*/
+   CalcMonotonicQRegionForElems(*domain, ptiny);
 }
 
 /******************************************/
