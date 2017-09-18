@@ -220,6 +220,8 @@ typedef Segment_Exec range_exec_policy;
 
 typedef RAJA::omp_target_parallel_for_exec<0> target_exec_policy;
 
+typedef target_exec_policy ExecPolicy;
+
 template <typename T>
 void enter_data(std::size_t size, T t) {
 #pragma omp target enter data map(to: t[:size])
@@ -385,8 +387,8 @@ void InitStressTermsForElems(Domain domain,
    // pull in the stresses appropriate to the hydro integration
    //
 
-   RAJA::forall<elem_exec_policy>(0, numElem, [=] (int i) {
-      sigxx[i] = sigyy[i] = sigzz[i] =  - domain.p(i) - domain.q(i) ;
+  RAJA::forall<ExecPolicy>(0, numElem, [=,p=&domain.p(0),q=&domain.q(0)] (int i) {
+      sigxx[i] = sigyy[i] = sigzz[i] =  - p[i] - q[i] ;
    } );
 }
 
@@ -1169,8 +1171,10 @@ void CalcVolumeForceForElems(Domain domain)
       Real_t *sigzz  = Allocate<Real_t>(numElem) ;
       Real_t *determ = Allocate<Real_t>(numElem) ;
 
+      enter_data(numElem, &domain.p(0), &domain.q(0), sigxx, sigyy, sigzz);
       /* Sum contributions to total stress tensor */
       InitStressTermsForElems(domain, sigxx, sigyy, sigzz, numElem);
+      exit_data(numElem, &domain.p(0), &domain.q(0), sigxx, sigyy, sigzz);
 
       // call elemlib stress integration loop to produce nodal forces from
       // material stresses.
@@ -1210,11 +1214,17 @@ RAJA_STORAGE void CalcForceForNodes(Domain domain)
            true, false) ;
 #endif  
 
-  RAJA::forall<node_exec_policy>(0, numNode, [=] (int i) {
-     domain.fx(i) = Real_t(0.0) ;
-     domain.fy(i) = Real_t(0.0) ;
-     domain.fz(i) = Real_t(0.0) ;
+  enter_data(numNode, &domain.fx(0), &domain.fy(0), &domain.fz(0));
+
+  RAJA::forall<ExecPolicy>(0, numNode, [fx=&domain.fx(0),
+                                        fy=&domain.fy(0),
+                                        fz=&domain.fz(0)] (int i) {
+     fx[i] = Real_t(0.0) ;
+     fy[i] = Real_t(0.0) ;
+     fz[i] = Real_t(0.0) ;
   } );
+
+  exit_data(numNode, &domain.fx(0), &domain.fy(0), &domain.fz(0));
 
   /* Calcforce calls partial, force, hourq */
   CalcVolumeForceForElems(domain) ;
@@ -1328,7 +1338,7 @@ void LagrangeNodal(Domain domain)
 #if USE_MPI  
 #if defined(SEDOV_SYNC_POS_VEL_EARLY)
    CommRecv(*domain, MSG_SYNC_POS_VEL, 6,
-            domain.sizeX() + 1, domain.sizeY() + 1, domain.sizeZ() + 1,
+           domain.sizeX() + 1, domain.sizeY() + 1, domain.sizeZ() + 1,
             false, false) ;
 #endif
 #endif
