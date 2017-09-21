@@ -222,27 +222,6 @@ typedef RAJA::omp_target_parallel_for_exec<0> target_exec_policy;
 
 typedef target_exec_policy ExecPolicy;
 
-template <typename T>
-void enter_data(std::size_t size, T t) {
-#pragma omp target enter data map(to: t[:size])
-}
-
-template <typename T, typename... Args>
-void enter_data(std::size_t size, T t, Args... args) {
-  enter_data(size, t);
-  enter_data(size, args...);
-}
-
-template <typename T>
-void exit_data(std::size_t size, T t) {
-#pragma omp target exit data map(from: t[:size])
-}
-
-template <typename T, typename... Args>
-void exit_data(std::size_t size, T t, Args... args) {
-  exit_data(size, t);
-  exit_data(size, args...);
-}
 /*********************************/
 /* Data structure implementation */
 /*********************************/
@@ -332,7 +311,9 @@ void TimeIncrement(Domain& domain)
 /******************************************/
 
 RAJA_STORAGE
-void CollectDomainNodesToElemNodes(Domain domain,
+void CollectDomainNodesToElemNodes(Real_t *x,
+                                   Real_t *y,
+                                   Real_t *z,
                                    const Index_t* elemToNode,
                                    Real_t elemX[8],
                                    Real_t elemY[8],
@@ -347,32 +328,32 @@ void CollectDomainNodesToElemNodes(Domain domain,
    Index_t nd6i = elemToNode[6] ;
    Index_t nd7i = elemToNode[7] ;
 
-   elemX[0] = domain.x(nd0i);
-   elemX[1] = domain.x(nd1i);
-   elemX[2] = domain.x(nd2i);
-   elemX[3] = domain.x(nd3i);
-   elemX[4] = domain.x(nd4i);
-   elemX[5] = domain.x(nd5i);
-   elemX[6] = domain.x(nd6i);
-   elemX[7] = domain.x(nd7i);
+   elemX[0] = x[nd0i];
+   elemX[1] = x[nd1i];
+   elemX[2] = x[nd2i];
+   elemX[3] = x[nd3i];
+   elemX[4] = x[nd4i];
+   elemX[5] = x[nd5i];
+   elemX[6] = x[nd6i];
+   elemX[7] = x[nd7i];
 
-   elemY[0] = domain.y(nd0i);
-   elemY[1] = domain.y(nd1i);
-   elemY[2] = domain.y(nd2i);
-   elemY[3] = domain.y(nd3i);
-   elemY[4] = domain.y(nd4i);
-   elemY[5] = domain.y(nd5i);
-   elemY[6] = domain.y(nd6i);
-   elemY[7] = domain.y(nd7i);
+   elemY[0] = y[nd0i];
+   elemY[1] = y[nd1i];
+   elemY[2] = y[nd2i];
+   elemY[3] = y[nd3i];
+   elemY[4] = y[nd4i];
+   elemY[5] = y[nd5i];
+   elemY[6] = y[nd6i];
+   elemY[7] = y[nd7i];
 
-   elemZ[0] = domain.z(nd0i);
-   elemZ[1] = domain.z(nd1i);
-   elemZ[2] = domain.z(nd2i);
-   elemZ[3] = domain.z(nd3i);
-   elemZ[4] = domain.z(nd4i);
-   elemZ[5] = domain.z(nd5i);
-   elemZ[6] = domain.z(nd6i);
-   elemZ[7] = domain.z(nd7i);
+   elemZ[0] = z[nd0i];
+   elemZ[1] = z[nd1i];
+   elemZ[2] = z[nd2i];
+   elemZ[3] = z[nd3i];
+   elemZ[4] = z[nd4i];
+   elemZ[5] = z[nd5i];
+   elemZ[6] = z[nd6i];
+   elemZ[7] = z[nd7i];
 
 }
 
@@ -610,34 +591,73 @@ void IntegrateStressForElems( Domain domain,
 #endif
 
    Index_t numElem8 = numElem * 8 ;
-   Real_t *fx_elem = nullptr;
-   Real_t *fy_elem = nullptr;
-   Real_t *fz_elem = nullptr;
-   Real_t fx_local[8] ;
-   Real_t fy_local[8] ;
-   Real_t fz_local[8] ;
 
-   Real_t* tfx_local = fx_local;
-   Real_t* tfy_local = fy_local;
-   Real_t* tfz_local = fz_local;
+   Real_t *x = &domain.m_x[0];
+   Real_t *y = &domain.m_y[0];
+   Real_t *z = &domain.m_z[0];
 
+   Real_t *fx = &domain.m_fx[0];
+   Real_t *fy = &domain.m_fy[0];
+   Real_t *fz = &domain.m_fz[0];
 
-  if (numthreads > 1) {
-     fx_elem = Allocate<Real_t>(numElem8) ;
-     fy_elem = Allocate<Real_t>(numElem8) ;
-     fz_elem = Allocate<Real_t>(numElem8) ;
-  }
+   Index_t *nodelist = &domain.m_nodelist[0];
+
+   Index_t *nodeElemStart = &domain.m_nodeElemStart[0];
+   Index_t len1 = numNode + 1;
+   Index_t *nodeElemCornerList = &domain.m_nodeElemCornerList[0];
+   Index_t len2 = nodeElemStart[numNode];
+
+  Real_t *fx_elem = Allocate<Real_t>(numElem8) ;
+  Real_t *fy_elem = Allocate<Real_t>(numElem8) ;
+  Real_t *fz_elem = Allocate<Real_t>(numElem8) ;
+
+#pragma omp target data map(alloc: fx_elem[:numElem8], fy_elem[:numElem8], fz_elem[:numElem8])
+  {
   // loop over all elements
-
-  RAJA::forall<elem_exec_policy>(0, numElem, [=] (int k) {
-    const Index_t* const elemToNode = domain.nodelist(k);
+  {
+  RAJA::forall<ExecPolicy>(0, numElem, [=] (unsigned k) {
+      const Index_t* const elemToNode = &nodelist[k*8];
     Real_t B[3][8] ;// shape function derivatives
     Real_t x_local[8] ;
     Real_t y_local[8] ;
     Real_t z_local[8] ;
 
     // get nodal coordinates from global arrays and copy into local arrays.
-    CollectDomainNodesToElemNodes(domain, elemToNode, x_local, y_local, z_local);
+    Index_t nd0i = elemToNode[0] ;
+    Index_t nd1i = elemToNode[1] ;
+    Index_t nd2i = elemToNode[2] ;
+    Index_t nd3i = elemToNode[3] ;
+    Index_t nd4i = elemToNode[4] ;
+    Index_t nd5i = elemToNode[5] ;
+    Index_t nd6i = elemToNode[6] ;
+    Index_t nd7i = elemToNode[7] ;
+
+    x_local[0] = x[nd0i];
+    x_local[1] = x[nd1i];
+    x_local[2] = x[nd2i];
+    x_local[3] = x[nd3i];
+    x_local[4] = x[nd4i];
+    x_local[5] = x[nd5i];
+    x_local[6] = x[nd6i];
+    x_local[7] = x[nd7i];
+
+    y_local[0] = y[nd0i];
+    y_local[1] = y[nd1i];
+    y_local[2] = y[nd2i];
+    y_local[3] = y[nd3i];
+    y_local[4] = y[nd4i];
+    y_local[5] = y[nd5i];
+    y_local[6] = y[nd6i];
+    y_local[7] = y[nd7i];
+
+    z_local[0] = z[nd0i];
+    z_local[1] = z[nd1i];
+    z_local[2] = z[nd2i];
+    z_local[3] = z[nd3i];
+    z_local[4] = z[nd4i];
+    z_local[5] = z[nd5i];
+    z_local[6] = z[nd6i];
+    z_local[7] = z[nd7i];
 
     // Volume calculation involves extra work for numerical consistency
     CalcElemShapeFunctionDerivatives(x_local, y_local, z_local,
@@ -646,34 +666,21 @@ void IntegrateStressForElems( Domain domain,
     CalcElemNodeNormals( B[0] , B[1], B[2],
                           x_local, y_local, z_local );
 
-    if (numthreads > 1) {
        // Eliminate thread writing conflicts at the nodes by giving
        // each element its own copy to write to
        SumElemStressesToNodeForces( B, sigxx[k], sigyy[k], sigzz[k],
                                     &fx_elem[k*8],
                                     &fy_elem[k*8],
                                     &fz_elem[k*8] ) ;
-    }
-    else {
-       SumElemStressesToNodeForces( B, sigxx[k], sigyy[k], sigzz[k],
-                                    tfx_local, tfy_local, tfz_local ) ;
+    } );}
 
-       // copy nodal force contributions to global force arrray.
-       for( Index_t lnode=0 ; lnode<8 ; ++lnode ) {
-          Index_t gnode = elemToNode[lnode];
-          domain.fx(gnode) += tfx_local[lnode];
-          domain.fy(gnode) += tfy_local[lnode];
-          domain.fz(gnode) += tfz_local[lnode];
-       }
-    }
-  } );
 
-  if (numthreads > 1) {
+
      // If threaded, then we need to copy the data out of the temporary
      // arrays used above into the final forces field
-     RAJA::forall<node_exec_policy>(0, numNode, [=] (int gnode) {
-        Index_t count = domain.nodeElemCount(gnode) ;
-        Index_t *cornerList = domain.nodeElemCornerList(gnode) ;
+     RAJA::forall<ExecPolicy>(0, numNode, [=] (int gnode) {
+         Index_t count = nodeElemStart[gnode+1] - nodeElemStart[gnode];
+        Index_t *cornerList = &nodeElemCornerList[nodeElemStart[gnode]] ;
         Real_t fx_tmp = Real_t(0.0) ;
         Real_t fy_tmp = Real_t(0.0) ;
         Real_t fz_tmp = Real_t(0.0) ;
@@ -683,14 +690,14 @@ void IntegrateStressForElems( Domain domain,
            fy_tmp += fy_elem[ielem] ;
            fz_tmp += fz_elem[ielem] ;
         }
-        domain.fx(gnode) = fx_tmp ;
-        domain.fy(gnode) = fy_tmp ;
-        domain.fz(gnode) = fz_tmp ;
+        fx[gnode] = fx_tmp ;
+        fy[gnode] = fy_tmp ;
+        fz[gnode] = fz_tmp ;
      } );
+  }
      Release(&fz_elem) ;
      Release(&fy_elem) ;
      Release(&fx_elem) ;
-  }
 }
 
 /******************************************/
@@ -814,8 +821,8 @@ void CalcElemFBHourglassForce(Real_t *xd, Real_t *yd, Real_t *zd,  Real_t hourga
 
 /******************************************/
 
-RAJA_STORAGE
-void CalcFBHourglassForceForElems( Domain* domain,
+static inline
+void CalcFBHourglassForceForElems( Domain &domain,
                                    Real_t *determ,
                                    Real_t *x8n, Real_t *y8n, Real_t *z8n,
                                    Real_t *dvdx, Real_t *dvdy, Real_t *dvdz,
@@ -823,274 +830,320 @@ void CalcFBHourglassForceForElems( Domain* domain,
                                    Index_t numNode)
 {
 
-#if USE_OMP
-   Index_t numthreads = omp_get_max_threads();
+#if _OPENMP
+  Index_t numthreads = omp_get_max_threads();
 #else
-   Index_t numthreads = 1;
+  Index_t numthreads = 1;
 #endif
-   /*************************************************
-    *
-    *     FUNCTION: Calculates the Flanagan-Belytschko anti-hourglass
-    *               force.
-    *
-    *************************************************/
+  /*************************************************
+   *
+   *     FUNCTION: Calculates the Flanagan-Belytschko anti-hourglass
+   *               force.
+   *
+   *************************************************/
   
-   Index_t numElem8 = numElem * 8 ;
+  Index_t numElem8 = numElem * 8 ;
 
-   Real_t *fx_elem = nullptr; 
-   Real_t *fy_elem = nullptr; 
-   Real_t *fz_elem = nullptr; 
+  Real_t *fx_elem; 
+  Real_t *fy_elem; 
+  Real_t *fz_elem; 
 
-   if(numthreads > 1) {
-      fx_elem = Allocate<Real_t>(numElem8) ;
-      fy_elem = Allocate<Real_t>(numElem8) ;
-      fz_elem = Allocate<Real_t>(numElem8) ;
-   }
-
-   Real_t  gamma[4][8];
-
-   gamma[0][0] = Real_t( 1.);
-   gamma[0][1] = Real_t( 1.);
-   gamma[0][2] = Real_t(-1.);
-   gamma[0][3] = Real_t(-1.);
-   gamma[0][4] = Real_t(-1.);
-   gamma[0][5] = Real_t(-1.);
-   gamma[0][6] = Real_t( 1.);
-   gamma[0][7] = Real_t( 1.);
-   gamma[1][0] = Real_t( 1.);
-   gamma[1][1] = Real_t(-1.);
-   gamma[1][2] = Real_t(-1.);
-   gamma[1][3] = Real_t( 1.);
-   gamma[1][4] = Real_t(-1.);
-   gamma[1][5] = Real_t( 1.);
-   gamma[1][6] = Real_t( 1.);
-   gamma[1][7] = Real_t(-1.);
-   gamma[2][0] = Real_t( 1.);
-   gamma[2][1] = Real_t(-1.);
-   gamma[2][2] = Real_t( 1.);
-   gamma[2][3] = Real_t(-1.);
-   gamma[2][4] = Real_t( 1.);
-   gamma[2][5] = Real_t(-1.);
-   gamma[2][6] = Real_t( 1.);
-   gamma[2][7] = Real_t(-1.);
-   gamma[3][0] = Real_t(-1.);
-   gamma[3][1] = Real_t( 1.);
-   gamma[3][2] = Real_t(-1.);
-   gamma[3][3] = Real_t( 1.);
-   gamma[3][4] = Real_t( 1.);
-   gamma[3][5] = Real_t(-1.);
-   gamma[3][6] = Real_t( 1.);
-   gamma[3][7] = Real_t(-1.);
+  if(numthreads > 1) {
+    fx_elem = Allocate<Real_t>(numElem8) ;
+    fy_elem = Allocate<Real_t>(numElem8) ;
+    fz_elem = Allocate<Real_t>(numElem8) ;
+  }
 
 /*************************************************/
 /*    compute the hourglass modes */
 
-   RAJA::forall<elem_exec_policy>(0, numElem, [=] (int i2) {
-      Real_t *fx_local, *fy_local, *fz_local ;
-      Real_t hgfx[8], hgfy[8], hgfz[8] ;
 
-      Real_t coefficient;
+  Index_t *nodelist = &domain.m_nodelist[0];
+  Real_t *ss = &domain.m_ss[0];
+  Real_t *elemMass = &domain.m_elemMass[0];
 
-      Real_t hourgam[8][4];
-      Real_t xd1[8], yd1[8], zd1[8] ;
+  Real_t *xd = &domain.m_xd[0];
+  Real_t *yd = &domain.m_yd[0];
+  Real_t *zd = &domain.m_zd[0];
 
-      const Index_t *elemToNode = domain->nodelist(i2);
-      Index_t i3=8*i2;
-      Real_t volinv=Real_t(1.0)/determ[i2];
-      Real_t ss1, mass1, volume13 ;
-      for(Index_t i1=0;i1<4;++i1){
+  Real_t *fx = &domain.m_fx[0];
+  Real_t *fy = &domain.m_fy[0];
+  Real_t *fz = &domain.m_fz[0];
 
-         Real_t hourmodx =
-            x8n[i3] * gamma[i1][0] + x8n[i3+1] * gamma[i1][1] +
-            x8n[i3+2] * gamma[i1][2] + x8n[i3+3] * gamma[i1][3] +
-            x8n[i3+4] * gamma[i1][4] + x8n[i3+5] * gamma[i1][5] +
-            x8n[i3+6] * gamma[i1][6] + x8n[i3+7] * gamma[i1][7];
+  Index_t *nodeElemStart = &domain.m_nodeElemStart[0];
+  Index_t len1 = numNode + 1;
+  Index_t *nodeElemCornerList = &domain.m_nodeElemCornerList[0];
+  Index_t len2 = nodeElemStart[numNode];
 
-         Real_t hourmody =
-            y8n[i3] * gamma[i1][0] + y8n[i3+1] * gamma[i1][1] +
-            y8n[i3+2] * gamma[i1][2] + y8n[i3+3] * gamma[i1][3] +
-            y8n[i3+4] * gamma[i1][4] + y8n[i3+5] * gamma[i1][5] +
-            y8n[i3+6] * gamma[i1][6] + y8n[i3+7] * gamma[i1][7];
+  /* start loop over elements */
+  // to: hourg, numthreads (these are firstprivate)
+  // tofrom:  fx[:numNode], fy[:numNode], fz[:numNode] (these are enter data)
+  // to: nodelist (this is enter data)
+  // printf("T6\n");
+  #pragma omp target data \
+    map(alloc: fx_elem[:numElem8], fy_elem[:numElem8], fz_elem[:numElem8])
+  {
+    RAJA::forall<ExecPolicy>(0, numElem, [=](unsigned i2) {
+    Real_t  gamma[4][8];
 
-         Real_t hourmodz =
-            z8n[i3] * gamma[i1][0] + z8n[i3+1] * gamma[i1][1] +
-            z8n[i3+2] * gamma[i1][2] + z8n[i3+3] * gamma[i1][3] +
-            z8n[i3+4] * gamma[i1][4] + z8n[i3+5] * gamma[i1][5] +
-            z8n[i3+6] * gamma[i1][6] + z8n[i3+7] * gamma[i1][7];
+    gamma[0][0] = Real_t( 1.);
+    gamma[0][1] = Real_t( 1.);
+    gamma[0][2] = Real_t(-1.);
+    gamma[0][3] = Real_t(-1.);
+    gamma[0][4] = Real_t(-1.);
+    gamma[0][5] = Real_t(-1.);
+    gamma[0][6] = Real_t( 1.);
+    gamma[0][7] = Real_t( 1.);
+    gamma[1][0] = Real_t( 1.);
+    gamma[1][1] = Real_t(-1.);
+    gamma[1][2] = Real_t(-1.);
+    gamma[1][3] = Real_t( 1.);
+    gamma[1][4] = Real_t(-1.);
+    gamma[1][5] = Real_t( 1.);
+    gamma[1][6] = Real_t( 1.);
+    gamma[1][7] = Real_t(-1.);
+    gamma[2][0] = Real_t( 1.);
+    gamma[2][1] = Real_t(-1.);
+    gamma[2][2] = Real_t( 1.);
+    gamma[2][3] = Real_t(-1.);
+    gamma[2][4] = Real_t( 1.);
+    gamma[2][5] = Real_t(-1.);
+    gamma[2][6] = Real_t( 1.);
+    gamma[2][7] = Real_t(-1.);
+    gamma[3][0] = Real_t(-1.);
+    gamma[3][1] = Real_t( 1.);
+    gamma[3][2] = Real_t(-1.);
+    gamma[3][3] = Real_t( 1.);
+    gamma[3][4] = Real_t( 1.);
+    gamma[3][5] = Real_t(-1.);
+    gamma[3][6] = Real_t( 1.);
+    gamma[3][7] = Real_t(-1.);
 
-         hourgam[0][i1] = gamma[i1][0] -  volinv*(dvdx[i3  ] * hourmodx +
-                                                  dvdy[i3  ] * hourmody +
-                                                  dvdz[i3  ] * hourmodz );
+    Real_t *fx_local, *fy_local, *fz_local ;
+    Real_t hgfx[8], hgfy[8], hgfz[8] ;
 
-         hourgam[1][i1] = gamma[i1][1] -  volinv*(dvdx[i3+1] * hourmodx +
-                                                  dvdy[i3+1] * hourmody +
-                                                  dvdz[i3+1] * hourmodz );
+    Real_t coefficient;
 
-         hourgam[2][i1] = gamma[i1][2] -  volinv*(dvdx[i3+2] * hourmodx +
-                                                  dvdy[i3+2] * hourmody +
-                                                  dvdz[i3+2] * hourmodz );
+    Real_t hourgam[8][4];
+    Real_t xd1[8], yd1[8], zd1[8] ;
 
-         hourgam[3][i1] = gamma[i1][3] -  volinv*(dvdx[i3+3] * hourmodx +
-                                                  dvdy[i3+3] * hourmody +
-                                                  dvdz[i3+3] * hourmodz );
+    // const Index_t *elemToNode = domain.nodelist(i2);
+    Index_t* elemToNode = &nodelist[Index_t(8)*i2];
+    Index_t i3=8*i2;
+    Real_t volinv=Real_t(1.0)/determ[i2];
+    Real_t ss1, mass1, volume13 ;
+    for(Index_t i1=0;i1<4;++i1) {
 
-         hourgam[4][i1] = gamma[i1][4] -  volinv*(dvdx[i3+4] * hourmodx +
-                                                  dvdy[i3+4] * hourmody +
-                                                  dvdz[i3+4] * hourmodz );
+      Real_t hourmodx =
+          x8n[i3] * gamma[i1][0] + x8n[i3+1] * gamma[i1][1] +
+          x8n[i3+2] * gamma[i1][2] + x8n[i3+3] * gamma[i1][3] +
+          x8n[i3+4] * gamma[i1][4] + x8n[i3+5] * gamma[i1][5] +
+          x8n[i3+6] * gamma[i1][6] + x8n[i3+7] * gamma[i1][7];
 
-         hourgam[5][i1] = gamma[i1][5] -  volinv*(dvdx[i3+5] * hourmodx +
-                                                  dvdy[i3+5] * hourmody +
-                                                  dvdz[i3+5] * hourmodz );
+      Real_t hourmody =
+          y8n[i3] * gamma[i1][0] + y8n[i3+1] * gamma[i1][1] +
+          y8n[i3+2] * gamma[i1][2] + y8n[i3+3] * gamma[i1][3] +
+          y8n[i3+4] * gamma[i1][4] + y8n[i3+5] * gamma[i1][5] +
+          y8n[i3+6] * gamma[i1][6] + y8n[i3+7] * gamma[i1][7];
 
-         hourgam[6][i1] = gamma[i1][6] -  volinv*(dvdx[i3+6] * hourmodx +
-                                                  dvdy[i3+6] * hourmody +
-                                                  dvdz[i3+6] * hourmodz );
+      Real_t hourmodz =
+          z8n[i3] * gamma[i1][0] + z8n[i3+1] * gamma[i1][1] +
+          z8n[i3+2] * gamma[i1][2] + z8n[i3+3] * gamma[i1][3] +
+          z8n[i3+4] * gamma[i1][4] + z8n[i3+5] * gamma[i1][5] +
+          z8n[i3+6] * gamma[i1][6] + z8n[i3+7] * gamma[i1][7];
 
-         hourgam[7][i1] = gamma[i1][7] -  volinv*(dvdx[i3+7] * hourmodx +
-                                                  dvdy[i3+7] * hourmody +
-                                                  dvdz[i3+7] * hourmodz );
+      hourgam[0][i1] = gamma[i1][0] -  volinv*(dvdx[i3  ] * hourmodx +
+          dvdy[i3  ] * hourmody +
+          dvdz[i3  ] * hourmodz );
 
+      hourgam[1][i1] = gamma[i1][1] -  volinv*(dvdx[i3+1] * hourmodx +
+          dvdy[i3+1] * hourmody +
+          dvdz[i3+1] * hourmodz );
+
+      hourgam[2][i1] = gamma[i1][2] -  volinv*(dvdx[i3+2] * hourmodx +
+          dvdy[i3+2] * hourmody +
+          dvdz[i3+2] * hourmodz );
+
+      hourgam[3][i1] = gamma[i1][3] -  volinv*(dvdx[i3+3] * hourmodx +
+          dvdy[i3+3] * hourmody +
+          dvdz[i3+3] * hourmodz );
+
+      hourgam[4][i1] = gamma[i1][4] -  volinv*(dvdx[i3+4] * hourmodx +
+          dvdy[i3+4] * hourmody +
+          dvdz[i3+4] * hourmodz );
+
+      hourgam[5][i1] = gamma[i1][5] -  volinv*(dvdx[i3+5] * hourmodx +
+          dvdy[i3+5] * hourmody +
+          dvdz[i3+5] * hourmodz );
+
+      hourgam[6][i1] = gamma[i1][6] -  volinv*(dvdx[i3+6] * hourmodx +
+          dvdy[i3+6] * hourmody +
+          dvdz[i3+6] * hourmodz );
+
+      hourgam[7][i1] = gamma[i1][7] -  volinv*(dvdx[i3+7] * hourmodx +
+          dvdy[i3+7] * hourmody +
+          dvdz[i3+7] * hourmodz );
+    }
+
+    /* compute forces */
+    /* store forces into h arrays (force arrays) */
+
+    ss1 = ss[i2];
+    mass1 = elemMass[i2];
+    volume13 = cbrt(determ[i2]);
+
+    Index_t n0si2 = elemToNode[0];
+    Index_t n1si2 = elemToNode[1];
+    Index_t n2si2 = elemToNode[2];
+    Index_t n3si2 = elemToNode[3];
+    Index_t n4si2 = elemToNode[4];
+    Index_t n5si2 = elemToNode[5];
+    Index_t n6si2 = elemToNode[6];
+    Index_t n7si2 = elemToNode[7];
+
+    xd1[0] = xd[n0si2];
+    xd1[1] = xd[n1si2];
+    xd1[2] = xd[n2si2];
+    xd1[3] = xd[n3si2];
+    xd1[4] = xd[n4si2];
+    xd1[5] = xd[n5si2];
+    xd1[6] = xd[n6si2];
+    xd1[7] = xd[n7si2];
+
+    yd1[0] = yd[n0si2];
+    yd1[1] = yd[n1si2];
+    yd1[2] = yd[n2si2];
+    yd1[3] = yd[n3si2];
+    yd1[4] = yd[n4si2];
+    yd1[5] = yd[n5si2];
+    yd1[6] = yd[n6si2];
+    yd1[7] = yd[n7si2];
+
+    zd1[0] = zd[n0si2];
+    zd1[1] = zd[n1si2];
+    zd1[2] = zd[n2si2];
+    zd1[3] = zd[n3si2];
+    zd1[4] = zd[n4si2];
+    zd1[5] = zd[n5si2];
+    zd1[6] = zd[n6si2];
+    zd1[7] = zd[n7si2];
+
+    coefficient = - hourg * Real_t(0.01) * ss1 * mass1 / volume13;
+
+    CalcElemFBHourglassForce(xd1,yd1,zd1,
+           hourgam,
+           coefficient, hgfx, hgfy, hgfz);
+
+    // With the threaded version, we write into local arrays per elem
+    // so we don't have to worry about race conditions
+    if (numthreads > 1) {
+      fx_local = &fx_elem[i3] ;
+      fx_local[0] = hgfx[0];
+      fx_local[1] = hgfx[1];
+      fx_local[2] = hgfx[2];
+      fx_local[3] = hgfx[3];
+      fx_local[4] = hgfx[4];
+      fx_local[5] = hgfx[5];
+      fx_local[6] = hgfx[6];
+      fx_local[7] = hgfx[7];
+
+      fy_local = &fy_elem[i3] ;
+      fy_local[0] = hgfy[0];
+      fy_local[1] = hgfy[1];
+      fy_local[2] = hgfy[2];
+      fy_local[3] = hgfy[3];
+      fy_local[4] = hgfy[4];
+      fy_local[5] = hgfy[5];
+      fy_local[6] = hgfy[6];
+      fy_local[7] = hgfy[7];
+
+      fz_local = &fz_elem[i3] ;
+      fz_local[0] = hgfz[0];
+      fz_local[1] = hgfz[1];
+      fz_local[2] = hgfz[2];
+      fz_local[3] = hgfz[3];
+      fz_local[4] = hgfz[4];
+      fz_local[5] = hgfz[5];
+      fz_local[6] = hgfz[6];
+      fz_local[7] = hgfz[7];
+    }
+    else {
+      fx[n0si2] += hgfx[0];
+      fy[n0si2] += hgfy[0];
+      fz[n0si2] += hgfz[0];
+
+      fx[n1si2] += hgfx[1];
+      fy[n1si2] += hgfy[1];
+      fz[n1si2] += hgfz[1];
+
+      fx[n2si2] += hgfx[2];
+      fy[n2si2] += hgfy[2];
+      fz[n2si2] += hgfz[2];
+
+      fx[n3si2] += hgfx[3];
+      fy[n3si2] += hgfy[3];
+      fz[n3si2] += hgfz[3];
+
+      fx[n4si2] += hgfx[4];
+      fy[n4si2] += hgfy[4];
+      fz[n4si2] += hgfz[4];
+
+      fx[n5si2] += hgfx[5];
+      fy[n5si2] += hgfy[5];
+      fz[n5si2] += hgfz[5];
+
+      fx[n6si2] += hgfx[6];
+      fy[n6si2] += hgfy[6];
+      fz[n6si2] += hgfz[6];
+
+      fx[n7si2] += hgfx[7];
+      fy[n7si2] += hgfy[7];
+      fz[n7si2] += hgfz[7];
+    }
+  });
+  // storeArray(fx_elem, numElem8, "fx_elem_host", domain);
+  // storeArray(fy_elem, numElem8, "fy_elem_host", domain);
+  // storeArray(fz_elem, numElem8, "fz_elem_host", domain);
+
+  // compArray(fx_elem, numElem8, "fx_elem_host", domain);
+  // compArray(fy_elem, numElem8, "fy_elem_host", domain);
+  // compArray(fz_elem, numElem8, "fz_elem_host", domain);
+
+  if (numthreads > 1) {
+    // Collect the data from the local arrays into the final force arrays
+    // printf("T7\n");
+      RAJA::forall<ExecPolicy>(0, numNode, [=](unsigned gnode) {
+      // element count
+      Index_t count = nodeElemStart[gnode+1] - nodeElemStart[gnode];//domain.nodeElemCount(gnode) ;
+      // list of all corners
+      Index_t *cornerList = &nodeElemCornerList[nodeElemStart[gnode]];//domain.nodeElemCornerList(gnode) ;
+      Real_t fx_tmp = Real_t(0.0) ;
+      Real_t fy_tmp = Real_t(0.0) ;
+      Real_t fz_tmp = Real_t(0.0) ;
+      for (Index_t i=0 ; i < count ; ++i) {
+        Index_t elem = cornerList[i] ;
+        fx_tmp += fx_elem[elem] ;
+        fy_tmp += fy_elem[elem] ;
+        fz_tmp += fz_elem[elem] ;
       }
+      fx[gnode] += fx_tmp ;
+      fy[gnode] += fy_tmp ;
+      fz[gnode] += fz_tmp ;
+        });
+    }
 
-      /* compute forces */
-      /* store forces into h arrays (force arrays) */
+    // storeArray(fx, numNode, "fx_host", domain);
+    // storeArray(fy, numNode, "fy_host", domain);
+    // storeArray(fz, numNode, "fz_host", domain);
+    // #pragma omp target exit data map(from:fx[:numNode], fy[:numNode], fz[:numNode])
+    // compArray(fx, numNode, "fx_host", domain);
+    // compArray(fy, numNode, "fy_host", domain);
+    // compArray(fz, numNode, "fz_host", domain);
 
-      ss1=domain->ss(i2);
-      mass1=domain->elemMass(i2);
-      volume13=CBRT(determ[i2]);
-
-      Index_t n0si2 = elemToNode[0];
-      Index_t n1si2 = elemToNode[1];
-      Index_t n2si2 = elemToNode[2];
-      Index_t n3si2 = elemToNode[3];
-      Index_t n4si2 = elemToNode[4];
-      Index_t n5si2 = elemToNode[5];
-      Index_t n6si2 = elemToNode[6];
-      Index_t n7si2 = elemToNode[7];
-
-      xd1[0] = domain->xd(n0si2);
-      xd1[1] = domain->xd(n1si2);
-      xd1[2] = domain->xd(n2si2);
-      xd1[3] = domain->xd(n3si2);
-      xd1[4] = domain->xd(n4si2);
-      xd1[5] = domain->xd(n5si2);
-      xd1[6] = domain->xd(n6si2);
-      xd1[7] = domain->xd(n7si2);
-
-      yd1[0] = domain->yd(n0si2);
-      yd1[1] = domain->yd(n1si2);
-      yd1[2] = domain->yd(n2si2);
-      yd1[3] = domain->yd(n3si2);
-      yd1[4] = domain->yd(n4si2);
-      yd1[5] = domain->yd(n5si2);
-      yd1[6] = domain->yd(n6si2);
-      yd1[7] = domain->yd(n7si2);
-
-      zd1[0] = domain->zd(n0si2);
-      zd1[1] = domain->zd(n1si2);
-      zd1[2] = domain->zd(n2si2);
-      zd1[3] = domain->zd(n3si2);
-      zd1[4] = domain->zd(n4si2);
-      zd1[5] = domain->zd(n5si2);
-      zd1[6] = domain->zd(n6si2);
-      zd1[7] = domain->zd(n7si2);
-
-      coefficient = - hourg * Real_t(0.01) * ss1 * mass1 / volume13;
-
-      CalcElemFBHourglassForce(xd1,yd1,zd1,
-                      hourgam,
-                      coefficient, hgfx, hgfy, hgfz);
-
-      // With the threaded version, we write into local arrays per elem
-      // so we don't have to worry about race conditions
-      if (numthreads > 1) {
-         fx_local = &fx_elem[i3] ;
-         fx_local[0] = hgfx[0];
-         fx_local[1] = hgfx[1];
-         fx_local[2] = hgfx[2];
-         fx_local[3] = hgfx[3];
-         fx_local[4] = hgfx[4];
-         fx_local[5] = hgfx[5];
-         fx_local[6] = hgfx[6];
-         fx_local[7] = hgfx[7];
-
-         fy_local = &fy_elem[i3] ;
-         fy_local[0] = hgfy[0];
-         fy_local[1] = hgfy[1];
-         fy_local[2] = hgfy[2];
-         fy_local[3] = hgfy[3];
-         fy_local[4] = hgfy[4];
-         fy_local[5] = hgfy[5];
-         fy_local[6] = hgfy[6];
-         fy_local[7] = hgfy[7];
-
-         fz_local = &fz_elem[i3] ;
-         fz_local[0] = hgfz[0];
-         fz_local[1] = hgfz[1];
-         fz_local[2] = hgfz[2];
-         fz_local[3] = hgfz[3];
-         fz_local[4] = hgfz[4];
-         fz_local[5] = hgfz[5];
-         fz_local[6] = hgfz[6];
-         fz_local[7] = hgfz[7];
-      }
-      else {
-         domain->fx(n0si2) += hgfx[0];
-         domain->fy(n0si2) += hgfy[0];
-         domain->fz(n0si2) += hgfz[0];
-
-         domain->fx(n1si2) += hgfx[1];
-         domain->fy(n1si2) += hgfy[1];
-         domain->fz(n1si2) += hgfz[1];
-
-         domain->fx(n2si2) += hgfx[2];
-         domain->fy(n2si2) += hgfy[2];
-         domain->fz(n2si2) += hgfz[2];
-
-         domain->fx(n3si2) += hgfx[3];
-         domain->fy(n3si2) += hgfy[3];
-         domain->fz(n3si2) += hgfz[3];
-
-         domain->fx(n4si2) += hgfx[4];
-         domain->fy(n4si2) += hgfy[4];
-         domain->fz(n4si2) += hgfz[4];
-
-         domain->fx(n5si2) += hgfx[5];
-         domain->fy(n5si2) += hgfy[5];
-         domain->fz(n5si2) += hgfz[5];
-
-         domain->fx(n6si2) += hgfx[6];
-         domain->fy(n6si2) += hgfy[6];
-         domain->fz(n6si2) += hgfz[6];
-
-         domain->fx(n7si2) += hgfx[7];
-         domain->fy(n7si2) += hgfy[7];
-         domain->fz(n7si2) += hgfz[7];
-      }
-   } );
-
-   if (numthreads > 1) {
-     // Collect the data from the local arrays into the final force arrays
-      RAJA::forall<node_exec_policy>(0, numNode, [=] (int gnode) {
-         Index_t count = domain->nodeElemCount(gnode) ;
-         Index_t *cornerList = domain->nodeElemCornerList(gnode) ;
-         Real_t fx_tmp = Real_t(0.0) ;
-         Real_t fy_tmp = Real_t(0.0) ;
-         Real_t fz_tmp = Real_t(0.0) ;
-         for (Index_t i=0 ; i < count ; ++i) {
-            Index_t ielem = cornerList[i] ;
-            fx_tmp += fx_elem[ielem] ;
-            fy_tmp += fy_elem[ielem] ;
-            fz_tmp += fz_elem[ielem] ;
-         }
-         domain->fx(gnode) += fx_tmp ;
-         domain->fy(gnode) += fy_tmp ;
-         domain->fz(gnode) += fz_tmp ;
-      } );
-      Release(&fz_elem) ;
-      Release(&fy_elem) ;
-      Release(&fx_elem) ;
-   }
+    Release(&fz_elem) ;
+    Release(&fy_elem) ;
+    Release(&fx_elem) ;
+  }
 }
 
 /******************************************/
@@ -1100,6 +1153,7 @@ void CalcHourglassControlForElems(Domain domain,
                                   Real_t determ[], Real_t hgcoef)
 {
    Index_t numElem = domain.numElem() ;
+   Index_t numNode = domain.numNode();
    Index_t numElem8 = numElem * 8 ;
    Real_t *dvdx = Allocate<Real_t>(numElem8) ;
    Real_t *dvdy = Allocate<Real_t>(numElem8) ;
@@ -1107,14 +1161,40 @@ void CalcHourglassControlForElems(Domain domain,
    Real_t *x8n  = Allocate<Real_t>(numElem8) ;
    Real_t *y8n  = Allocate<Real_t>(numElem8) ;
    Real_t *z8n  = Allocate<Real_t>(numElem8) ;
+   auto volo=&domain.volo(0), v=&domain.v(0),
+     x=&domain.x(0), y=&domain.y(0), z=&domain.z(0);
+   Index_t *nodelist=domain.m_nodelist.data();
+   auto fx=&domain.fx(0), fy=&domain.fy(0), fz=&domain.fz(0);
+   Real_t *ss = &domain.m_ss[0];
+   Real_t *elemMass = &domain.m_elemMass[0];
 
+   Real_t *xd = &domain.m_xd[0];
+   Real_t *yd = &domain.m_yd[0];
+   Real_t *zd = &domain.m_zd[0];
+
+   Index_t *nodeElemStart = &domain.m_nodeElemStart[0];
+   Index_t len1 = numNode + 1;
+   Index_t *nodeElemCornerList = &domain.m_nodeElemCornerList[0];
+   Index_t len2 = nodeElemStart[numNode];
+
+#pragma omp target enter data map(to: volo[:numElem], v[:numElem], nodelist[:numElem8], \
+                                  x[:numNode], y[:numNode], z[:numNode]) \
+  map(alloc: determ[:numElem])
+
+#pragma omp target data                                                 \
+  map(from: dvdx[:numElem8], dvdy[:numElem8], dvdz[:numElem8],          \
+      x8n[:numElem8], y8n[:numElem8], z8n[:numElem8])
+   {
+
+   bool failed = false;
    /* start loop over elements */
-   RAJA::forall<elem_exec_policy>(0, numElem, [=] (int i) {
+   RAJA::forall<ExecPolicy>(0, numElem, [=,&failed] (int i) {
       Real_t  x1[8],  y1[8],  z1[8] ;
       Real_t pfx[8], pfy[8], pfz[8] ;
 
-      Index_t* elemToNode = domain.nodelist(i);
-      CollectDomainNodesToElemNodes(domain, elemToNode, x1, y1, z1);
+      Index_t* elemToNode = &nodelist[i*8];
+      CollectDomainNodesToElemNodes(x, y, z,
+                                    elemToNode, x1, y1, z1);
 
       CalcElemVolumeDerivative(pfx, pfy, pfz, x1, y1, z1);
 
@@ -1130,24 +1210,43 @@ void CalcHourglassControlForElems(Domain domain,
          z8n[jj]  = z1[ii];
       }
 
-      determ[i] = domain.volo(i) * domain.v(i);
+      determ[i] = volo[i] * v[i];
 
       /* Do a check for negative volumes */
-      if ( domain.v(i) <= Real_t(0.0) ) {
-#if USE_MPI         
-         MPI_Abort(MPI_COMM_WORLD, VolumeError) ;
-#else
-         exit(VolumeError);
-#endif
+      if ( v[i] <= Real_t(0.0) ) {
+        failed = true;
       }
    } );
+   if (failed) {
+#if USE_MPI         
+     MPI_Abort(MPI_COMM_WORLD, VolumeError) ;
+#else
+     exit(VolumeError);
+#endif
+   }
+   }
+#pragma omp target exit data map(delete: volo[:numElem], v[:numElem],\
+                                  x[:numNode], y[:numNode], z[:numNode])
 
+#pragma omp target enter data map(to: fx[:numNode], fy[:numNode], fz[:numNode], \
+                                  ss[:numElem], elemMass[:numElem], dvdx[:numElem8], \
+                                  dvdy[:numElem8], dvdz[:numElem8],     \
+                                  x8n[:numElem8], y8n[:numElem8], z8n[:numElem8], \
+                                  xd[:numNode], yd[:numNode], zd[:numNode], \
+                                  nodeElemStart[:len1], nodeElemCornerList[:len2])
    if ( hgcoef > Real_t(0.) ) {
-      CalcFBHourglassForceForElems( &domain,
+      CalcFBHourglassForceForElems( domain,
                                     determ, x8n, y8n, z8n, dvdx, dvdy, dvdz,
                                     hgcoef, numElem, domain.numNode()) ;
    }
-
+#pragma omp target exit data map(from: fx[:numNode], fy[:numNode], fz[:numNode]) \
+  map(delete: nodeElemStart[:len1], nodeElemCornerList[:len2],          \
+      ss[:numElem], elemMass[:numElem],                                 \
+      determ[:numElem], dvdx[:numElem8],                                \
+      dvdy[:numElem8], dvdz[:numElem8],                                 \
+      x8n[:numElem8], y8n[:numElem8], z8n[:numElem8],                   \
+      xd[:numNode], yd[:numNode], zd[:numNode],                         \
+      nodelist[:numElem8], volo[:numElem], v[:numElem], x[:numNode], y[:numNode], z[:numNode])
    Release(&z8n) ;
    Release(&y8n) ;
    Release(&x8n) ;
@@ -1171,10 +1270,29 @@ void CalcVolumeForceForElems(Domain domain)
       Real_t *sigzz  = Allocate<Real_t>(numElem) ;
       Real_t *determ = Allocate<Real_t>(numElem) ;
 
-      enter_data(numElem, &domain.p(0), &domain.q(0), sigxx, sigyy, sigzz);
+      auto *p = &domain.p(0), *q = &domain.q(0);
+      Real_t *x = &domain.m_x[0];
+      Real_t *y = &domain.m_y[0];
+      Real_t *z = &domain.m_z[0];
+
+      Real_t *fx = &domain.m_fx[0];
+      Real_t *fy = &domain.m_fy[0];
+      Index_t *nodelist = &domain.m_nodelist[0];
+
+      auto numNode = domain.numNode();
+      Index_t *nodeElemStart = &domain.m_nodeElemStart[0];
+      Index_t len1 = numNode + 1;
+      Index_t *nodeElemCornerList = &domain.m_nodeElemCornerList[0];
+      Index_t len2 = nodeElemStart[numNode];
+
+     Real_t *fz = &domain.m_fz[0];
+     Index_t numElem8 = numElem * 8 ;
+#pragma omp target enter data map(to: p[:numElem], q[:numElem]) map(alloc: sigxx[:numElem], sigyy[:numElem], sigzz[:numElem])\
+  map(to: x[:numNode], y[:numNode], z[:numNode],                        \
+      nodelist[:numElem8], fx[:numNode], fy[:numNode], fz[:numNode], nodeElemStart[:len1], nodeElemCornerList[:len2]) \
+  map(alloc: determ[:numElem])
       /* Sum contributions to total stress tensor */
       InitStressTermsForElems(domain, sigxx, sigyy, sigzz, numElem);
-      exit_data(numElem, &domain.p(0), &domain.q(0), sigxx, sigyy, sigzz);
 
       // call elemlib stress integration loop to produce nodal forces from
       // material stresses.
@@ -1182,16 +1300,23 @@ void CalcVolumeForceForElems(Domain domain)
                                sigxx, sigyy, sigzz, determ, numElem,
                                domain.numNode()) ;
 
+      bool failed = false;
       // check for negative element volume
-      RAJA::forall<elem_exec_policy>(0, numElem, [=] (int k) {
+      RAJA::forall<ExecPolicy>(0, numElem, [=,&failed] (int k) {
          if (determ[k] <= Real_t(0.0)) {
-#if USE_MPI            
-            MPI_Abort(MPI_COMM_WORLD, VolumeError) ;
-#else
-            exit(VolumeError);
-#endif
+           failed = true;
          }
       } );
+
+      if(failed) {
+        printf("Error in determ\n");
+        exit(VolumeError);
+      }
+#pragma omp target exit data                                            \
+  map(delete: sigxx[:numElem], sigyy[:numElem], sigzz[:numElem],        \
+      x[:numNode], y[:numNode], z[:numNode], nodelist[:numElem8],       \
+      nodeElemCornerList[:len2], nodeElemStart[:len1])                  \
+  map(from: determ[:numElem], fx[:numNode], fy[:numNode], fz[:numNode], p[:numElem], q[:numElem])
 
       CalcHourglassControlForElems(domain, determ, hgcoef) ;
 
@@ -1214,17 +1339,16 @@ RAJA_STORAGE void CalcForceForNodes(Domain domain)
            true, false) ;
 #endif  
 
-  enter_data(numNode, &domain.fx(0), &domain.fy(0), &domain.fz(0));
+  auto *fx = &domain.fx(0), *fy = &domain.fy(0), *fz = &domain.fz(0);
+#pragma omp target enter data map(alloc: fx[:numNode], fy[:numNode], fz[:numNode])
 
-  RAJA::forall<ExecPolicy>(0, numNode, [fx=&domain.fx(0),
-                                        fy=&domain.fy(0),
-                                        fz=&domain.fz(0)] (int i) {
+  RAJA::forall<ExecPolicy>(0, numNode, [=] (int i) {
      fx[i] = Real_t(0.0) ;
      fy[i] = Real_t(0.0) ;
      fz[i] = Real_t(0.0) ;
   } );
 
-  exit_data(numNode, &domain.fx(0), &domain.fy(0), &domain.fz(0));
+#pragma omp target exit data map(from: fx[:numNode], fy[:numNode], fz[:numNode])
 
   /* Calcforce calls partial, force, hourq */
   CalcVolumeForceForElems(domain) ;
@@ -1624,7 +1748,10 @@ void CalcKinematicsForElems( Domain* domain,
     const Index_t* const elemToNode = domain->nodelist(k) ;
 
     // get nodal coordinates from global arrays and copy into local arrays.
-    CollectDomainNodesToElemNodes(*domain, elemToNode, x_local, y_local, z_local);
+    CollectDomainNodesToElemNodes(&domain->x(0),
+                                  &domain->y(0),
+                                  &domain->z(0),
+                                  elemToNode, x_local, y_local, z_local);
 
     // volume calculations
     volume = CalcElemVolume(x_local, y_local, z_local );
@@ -1679,13 +1806,12 @@ void CalcLagrangeElements(Domain domain)
 
       CalcKinematicsForElems(&domain, deltatime, numElem) ;
 
-      enter_data(numElem,&domain.dxx(0),&domain.dyy(0),&domain.dzz(0),&domain.vdov(0));
+      auto *dxx=&domain.dxx(0), *dyy=&domain.dyy(0), *dzz=&domain.dzz(0), *vdov_v=&domain.vdov(0);
+#pragma omp target enter data map(to: dxx[:numElem], dyy[:numElem], dzz[:numElem], vdov_v[:numElem])
       {
 	Timer t("CalcLagrangeElements_"+std::to_string(numElem));
       // element loop to do some stuff not included in the elemlib function.
-      RAJA::forall<target_exec_policy>(0, numElem, [=, dxx=&domain.dxx(0),
-                                                    dyy=&domain.dyy(0),dzz=&domain.dzz(0),
-                                                    vdov_v=&domain.vdov(0)] (int k) {
+      RAJA::forall<target_exec_policy>(0, numElem, [=] (int k) {
           // calc strain rate and apply as constraint (only done in FB element)
           Real_t vdov = dxx[k] + dyy[k] + dzz[k];
           Real_t vdovthird = vdov/Real_t(3.0) ;
@@ -1698,7 +1824,7 @@ void CalcLagrangeElements(Domain domain)
         });
      } // record time
 
-      exit_data(numElem,&domain.dxx(0),&domain.dyy(0),&domain.dzz(0),&domain.vdov(0));
+#pragma omp target exit data map(from: dxx[:numElem], dyy[:numElem], dzz[:numElem], vdov_v[:numElem])
       RAJA::forall<elem_exec_policy>(0, numElem, [=] (int k) {
         // See if any volumes are negative, and take appropriate action.
          if (domain.vnew(k) <= Real_t(0.0))
@@ -1721,35 +1847,27 @@ void CalcMonotonicQGradientsForElems(Domain domain)
 {
    Index_t numElem = domain.numElem();
 
-   enter_data(numElem*8, domain.nodelist(0));
-   enter_data(numElem,
-              &domain.x(0), &domain.y(0), &domain.z(0),
-              &domain.xd(0), &domain.yd(0), &domain.zd(0),
-              &domain.volo(0), &domain.vnew(0),
-              &domain.delx_zeta(0), &domain.delv_zeta(0),
-              &domain.delx_xi(0), &domain.delv_xi(0),
-              &domain.delx_eta(0), &domain.delv_eta(0));
+   auto *nodelist = domain.nodelist(0);
+   auto *x = &domain.x(0), *y = &domain.y(0), *z = &domain.z(0),
+        *xd = &domain.xd(0), *yd = &domain.yd(0), *zd = &domain.zd(0),
+        *volo = &domain.volo(0), *vnew = &domain.vnew(0),
+        *delx_zeta = &domain.delx_zeta(0), *delv_zeta = &domain.delv_zeta(0),
+        *delx_xi = &domain.delx_xi(0), *delv_xi = &domain.delv_xi(0),
+        *delx_eta = &domain.delx_eta(0), *delv_eta = &domain.delv_eta(0);
+   Int_t allElem = domain.numElem() + 2 * domain.sizeX() * domain.sizeY() +
+                   2 * domain.sizeX() * domain.sizeZ() +
+                   2 * domain.sizeY() * domain.sizeZ();
+
+#pragma omp target enter data map(to: nodelist[:numElem*8], x[:numElem], y[:numElem], z[:numElem],\
+   xd[:numElem], yd[:numElem], zd[:numElem], volo[:numElem], vnew[:numElem], delx_zeta[:numElem],\
+                                  delv_zeta[:numElem], delx_xi[:numElem], delv_xi[:numElem],                             \
+                                  delx_eta[:numElem], delv_eta[:numElem])
 
    {
 
      Timer t("CalcMonotonicQGradientsForElems_"+std::to_string(numElem));
 
-   RAJA::forall<target_exec_policy>(0, numElem, [=,
-                                                 nodelist = domain.nodelist(0),
-                                                 x = &domain.x(0),
-                                                 y = &domain.y(0),
-                                                 z = &domain.z(0),
-                                                 xd = &domain.xd(0),
-                                                 yd = &domain.yd(0),
-                                                 zd = &domain.zd(0),
-                                                 volo = &domain.volo(0),
-                                                 vnew = &domain.vnew(0),
-                                                 delx_zeta = &domain.delx_zeta(0),
-                                                 delv_zeta = &domain.delv_zeta(0),
-                                                 delx_xi = &domain.delx_xi(0),
-                                                 delv_xi = &domain.delv_xi(0),
-                                                 delx_eta = &domain.delx_eta(0),
-                                                 delv_eta = &domain.delv_eta(0)] (int i) {
+   RAJA::forall<target_exec_policy>(0, numElem, [=] (unsigned i) {
       const Real_t ptiny = Real_t(1.e-36) ;
       Real_t ax,ay,az ;
       Real_t dxv,dyv,dzv ;
@@ -1891,15 +2009,11 @@ void CalcMonotonicQGradientsForElems(Domain domain)
    });
 
    }
-   exit_data(numElem*8, domain.nodelist(0));
-   exit_data(numElem,
-             &domain.x(0), &domain.y(0), &domain.z(0),
-             &domain.xd(0), &domain.yd(0), &domain.zd(0),
-             &domain.volo(0), &domain.vnew(0),
-             &domain.delx_zeta(0), &domain.delv_zeta(0),
-             &domain.delx_xi(0), &domain.delv_xi(0),
-             &domain.delx_eta(0), &domain.delv_eta(0));
 
+#pragma omp target exit data map(from: nodelist[:numElem*8], x[:numElem], y[:numElem], z[:numElem], \
+  xd[:numElem], yd[:numElem], zd[:numElem], volo[:numElem], vnew[:numElem], delx_zeta[:numElem], \
+  delv_zeta[:numElem], delx_xi[:numElem], delv_xi[:numElem],            \
+  delx_eta[:numElem], delv_eta[:numElem])
 }
 
 /******************************************/
@@ -1913,52 +2027,30 @@ void CalcMonotonicQRegionForElems(Domain domain,
    Real_t qlc_monoq = domain.qlc_monoq();
    Real_t qqc_monoq = domain.qqc_monoq();
 
+   Int_t numElem = domain.numElem();
    Int_t allElem = domain.numElem() +
      2*domain.sizeX()*domain.sizeY() +
      2*domain.sizeX()*domain.sizeZ() +
      2*domain.sizeY()*domain.sizeZ();
-   enter_data(allElem,&domain.delv_xi(0), &domain.delv_eta(0), &domain.delv_zeta(0));
-   enter_data(domain.numElem(),
-              &domain.delx_xi(0),
-              &domain.elemBC(0),
-              &domain.lxim(0),
-              &domain.lxip(0),
-              &domain.delx_eta(0),
-              &domain.letam(0),
-              &domain.letap(0),
-              &domain.delx_zeta(0),
-              &domain.lzetam(0),
-              &domain.lzetap(0),
-              &domain.vdov(0),
-              &domain.volo(0),
-              &domain.elemMass(0),
-              &domain.vnew(0),
-              &domain.qq(0),
-              &domain.ql(0));
-
-
+   auto delv_xi=&domain.delv_xi(0), delv_eta=&domain.delv_eta(0), delv_zeta=&domain.delv_zeta(0);
+   auto elemBC=&domain.elemBC(0), lxim=&domain.lxim(0), lxip=&domain.lxip(0), letam=&domain.letam(0),
+     letap=&domain.letap(0), lzetam=&domain.lzetam(0), lzetap=&domain.lzetap(0);
+   auto delx_xi=&domain.delx_xi(0), delx_eta=&domain.delx_eta(0), delx_zeta=&domain.delx_zeta(0),
+     vdov=&domain.vdov(0), volo=&domain.volo(0),
+     elemMass=&domain.elemMass(0), vnew=&domain.vnew(0), qq=&domain.qq(0), ql=&domain.ql(0);
+   
+#pragma omp target data                                             \
+  map(to: vdov[:numElem], elemMass[:numElem], volo[:numElem],       \
+      delx_xi[:numElem], delx_zeta[:numElem], delx_eta[:numElem],   \
+      lzetam[:numElem], lzetap[:numElem], delv_zeta[:numElem],      \
+      letam[:numElem], letap[:numElem], delv_eta[:numElem],         \
+      lxip[:numElem], lxim[:numElem], elemBC[:numElem],             \
+      delv_xi[:numElem], qlc_monoq, qqc_monoq, monoq_limiter_mult,  \
+      monoq_max_slope, ptiny)                                       \
+      map(tofrom: ql[:numElem], qq[:numElem], vnew[:numElem])
       {
     Timer t("CalcMonotonicQRegionForElems");
-   RAJA::forall<target_exec_policy>(0, domain.numElem(), [=,
-                                                             delv_xi = &domain.delv_xi(0),
-                                                             delx_xi = &domain.delx_xi(0),
-                                                             elemBC = &domain.elemBC(0),
-                                                             lxim = &domain.lxim(0),
-                                                             lxip = &domain.lxip(0),
-                                                             delv_eta = &domain.delv_eta(0),
-                                                             delx_eta = &domain.delx_eta(0),
-                                                             letam = &domain.letam(0),
-                                                             letap = &domain.letap(0),
-                                                             delv_zeta = &domain.delv_zeta(0),
-                                                             delx_zeta = &domain.delx_zeta(0),
-                                                             lzetam = &domain.lzetam(0),
-                                                             lzetap = &domain.lzetap(0),
-                                                             vdov = &domain.vdov(0),
-                                                             volo = &domain.volo(0),
-                                                             elemMass = &domain.elemMass(0),
-                                                             vnew = &domain.vnew(0),
-                                                              qq = &domain.qq(0),
-                                                              ql = &domain.ql(0)] (int i) {
+   RAJA::forall<target_exec_policy>(0, numElem, [=] (int i) {
      Index_t ielem = i;
      Real_t qlin, qquad ;
      Real_t phixi, phieta, phizeta ;
@@ -2114,24 +2206,7 @@ void CalcMonotonicQRegionForElems(Domain domain,
      ql[ielem] = qlin  ;
   });
    }
-      exit_data(allElem,&domain.delv_xi(0), &domain.delv_eta(0), &domain.delv_zeta(0));
-      exit_data(domain.numElem(),
-                 &domain.delx_xi(0),
-                 &domain.elemBC(0),
-                 &domain.lxim(0),
-                 &domain.lxip(0),
-                 &domain.delx_eta(0),
-                 &domain.letam(0),
-                 &domain.letap(0),
-                 &domain.delx_zeta(0),
-                 &domain.lzetam(0),
-                 &domain.lzetap(0),
-                 &domain.vdov(0),
-                 &domain.volo(0),
-                 &domain.elemMass(0),
-                 &domain.vnew(0),
-                &domain.qq(0),
-                &domain.ql(0));
+
 }
 
 /******************************************/
@@ -2415,11 +2490,13 @@ void CalcSoundSpeedForElems(Domain domain,
                             Index_t len, Index_t *regElemList)
 {
   if (len == 0) return;
-  enter_data(len,regElemList,pbvc,enewc,bvc,pnewc);
-  enter_data(domain.numElem(), vnewc, &domain.ss(0));
+  Int_t numElem = domain.numElem();
+  auto ss = &domain.ss(0);
+#pragma omp target enter data map(to: regElemList[:len], pbvc[:len], enewc[:len], bvc[:len], pnewc[:len], vnewc[:numElem], ss[:numElem])
+
   {
     Timer t("CalcSoundSpeedForElems_"+std::to_string(len));
-    RAJA::forall<target_exec_policy>(0, len, [=,ss=&domain.ss(0)] (int i) {
+    RAJA::forall<target_exec_policy>(0, len, [=] (int i) {
        Index_t ielem = regElemList[i];
        Real_t ssTmp = (pbvc[i] * enewc[i] + vnewc[ielem] * vnewc[ielem] *
                        bvc[i] * pnewc[i]) / rho0;
@@ -2431,9 +2508,8 @@ void CalcSoundSpeedForElems(Domain domain,
        }
        ss[ielem] = ssTmp ;
      });
-     exit_data(len,regElemList,pbvc,enewc,bvc,pnewc);
-     exit_data(domain.numElem(), &domain.ss(0));
   }
+#pragma omp target exit data map(from: regElemList[:len], pbvc[:len], enewc[:len], bvc[:len], pnewc[:len], vnewc[:numElem], ss[:numElem])
 }
 
 /******************************************/
