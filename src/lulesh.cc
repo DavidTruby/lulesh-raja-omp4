@@ -1292,38 +1292,7 @@ RAJA_STORAGE void CalcForceForNodes(Domain domain)
            true, false) ;
 #endif  
 
- 
-
-  auto volo=&domain.volo(0), v=&domain.v(0);
-  Real_t *ss = &domain.m_ss[0];
-  Real_t *elemMass = &domain.m_elemMass[0];
-
-  Real_t *xd = &domain.m_xd[0];
-  Real_t *yd = &domain.m_yd[0];
-  Real_t *zd = &domain.m_zd[0];
-  auto *p = &domain.p(0), *q = &domain.q(0);
-  Real_t *x = &domain.m_x[0];
-  Real_t *y = &domain.m_y[0];
-  Real_t *z = &domain.m_z[0];
-
-  Index_t *nodelist = &domain.m_nodelist[0];
-  Index_t numElem = domain.numElem();
-  Index_t numElem8 = numElem * 8;
-  Index_t *nodeElemStart = &domain.m_nodeElemStart[0];
-  Index_t len1 = numNode + 1;
-  Index_t *nodeElemCornerList = &domain.m_nodeElemCornerList[0];
-  Index_t len2 = nodeElemStart[numNode];
-
  auto *fx = &domain.fx(0), *fy = &domain.fy(0), *fz = &domain.fz(0);
-#pragma omp target enter data map(alloc: fx[:numNode], fy[:numNode], fz[:numNode])
-#pragma omp target enter data map(to: p[:numElem], q[:numElem],         \
-                                  x[:numNode], y[:numNode], z[:numNode], \
-                                  nodelist[:numElem8],                  \
-                                  nodeElemStart[:len1], nodeElemCornerList[:len2], \
-                                  volo[:numElem], v[:numElem],          \
-                                  ss[:numElem], elemMass[:numElem],     \
-                                  xd[:numNode], yd[:numNode], zd[:numNode])
-
   RAJA::forall<ExecPolicy>(0, numNode, [=] (int i) {
      fx[i] = Real_t(0.0) ;
      fy[i] = Real_t(0.0) ;
@@ -1345,12 +1314,6 @@ RAJA_STORAGE void CalcForceForNodes(Domain domain)
            true, false) ;
   CommSBN(*domain, 3, fieldData) ;
 #endif  
-#pragma omp target exit data map(from: fx[:numNode], fy[:numNode], fz[:numNode]) \
-  map(delete: nodeElemStart[:len1], nodeElemCornerList[:len2],          \
-      ss[:numElem], elemMass[:numElem],                                 \
-      xd[:numNode], yd[:numNode], zd[:numNode],                         \
-      nodelist[:numElem8], volo[:numElem], v[:numElem], x[:numNode], y[:numNode], z[:numNode]) \
-  map(from: p[:numElem], q[:numElem])
 }
 
 /******************************************/
@@ -1358,12 +1321,16 @@ RAJA_STORAGE void CalcForceForNodes(Domain domain)
 RAJA_STORAGE
 void CalcAccelerationForNodes(Domain domain, Index_t numNode)
 {
-   
-   RAJA::forall<node_exec_policy>(0, numNode, [=] (int i) {
-      domain.xdd(i) = domain.fx(i) / domain.nodalMass(i);
-      domain.ydd(i) = domain.fy(i) / domain.nodalMass(i);
-      domain.zdd(i) = domain.fz(i) / domain.nodalMass(i);
+  auto fx=&domain.fx(0), fy=&domain.fy(0), fz=&domain.fz(0);
+  auto nodalMass=&domain.nodalMass(0),
+    xdd=&domain.xdd(0), ydd=&domain.ydd(0), zdd=&domain.zdd(0);
+
+   RAJA::forall<target_exec_policy>(0, numNode, [=] (int i) {
+      xdd[i] = fx[i] / nodalMass[i];
+      ydd[i] = fy[i] / nodalMass[i];
+      zdd[i] = fz[i] / nodalMass[i];
    } );
+
 }
 
 /******************************************/
@@ -1373,22 +1340,24 @@ void ApplyAccelerationBoundaryConditionsForNodes(Domain domain)
 {
    Index_t size = domain.sizeX();
    Index_t numNodeBC = (size+1)*(size+1) ;
+   auto xdd=&domain.xdd(0), ydd=&domain.ydd(0), zdd=&domain.zdd(0);
+   auto symmX=&domain.m_symmX[0], symmY=&domain.m_symmY[0], symmZ=&domain.m_symmZ[0];
 
    if (!domain.symmXempty() != 0) {
-      RAJA::forall<range_exec_policy>(int(0), int(numNodeBC), [=] (int i) {
-         domain.xdd(domain.symmX(i)) = Real_t(0.0) ;
+      RAJA::forall<target_exec_policy>(int(0), int(numNodeBC), [=] (int i) {
+         xdd[symmX[i]] = Real_t(0.0) ;
       } );
    }
 
    if (!domain.symmYempty() != 0) {
-      RAJA::forall<range_exec_policy>(int(0), int(numNodeBC), [=] (int i) {
-         domain.ydd(domain.symmY(i)) = Real_t(0.0) ;
+      RAJA::forall<target_exec_policy>(int(0), int(numNodeBC), [=] (int i) {
+         ydd[symmY[i]] = Real_t(0.0) ;
       } );
    }
 
    if (!domain.symmZempty() != 0) {
-      RAJA::forall<range_exec_policy>(int(0), int(numNodeBC), [=] (int i) {
-         domain.zdd(domain.symmZ(i)) = Real_t(0.0) ;
+      RAJA::forall<target_exec_policy>(int(0), int(numNodeBC), [=] (int i) {
+         zdd[symmZ[i]] = Real_t(0.0) ;
       } );
    }
 
@@ -1400,22 +1369,26 @@ RAJA_STORAGE
 void CalcVelocityForNodes(Domain domain, const Real_t dt, const Real_t u_cut,
                           Index_t numNode)
 {
+  auto xd=&domain.xd(0),xdd=&domain.xdd(0);
+  auto yd=&domain.yd(0),ydd=&domain.ydd(0);
+  auto zd=&domain.zd(0),zdd=&domain.zdd(0);
 
-   RAJA::forall<node_exec_policy>(0, numNode, [=] (int i) {
+   RAJA::forall<target_exec_policy>(0, numNode, [=] (int i) {
      Real_t xdtmp, ydtmp, zdtmp ;
 
-     xdtmp = domain.xd(i) + domain.xdd(i) * dt ;
+     xdtmp = xd[i] + xdd[i] * dt ;
      if( FABS(xdtmp) < u_cut ) xdtmp = Real_t(0.0);
-     domain.xd(i) = xdtmp ;
+     xd[i] = xdtmp ;
 
-     ydtmp = domain.yd(i) + domain.ydd(i) * dt ;
+     ydtmp = yd[i] + ydd[i] * dt ;
      if( FABS(ydtmp) < u_cut ) ydtmp = Real_t(0.0);
-     domain.yd(i) = ydtmp ;
+     yd[i] = ydtmp ;
 
-     zdtmp = domain.zd(i) + domain.zdd(i) * dt ;
+     zdtmp = zd[i] + zdd[i] * dt ;
      if( FABS(zdtmp) < u_cut ) zdtmp = Real_t(0.0);
-     domain.zd(i) = zdtmp ;
+     zd[i] = zdtmp ;
    } );
+
 }
 
 /******************************************/
@@ -1423,10 +1396,12 @@ void CalcVelocityForNodes(Domain domain, const Real_t dt, const Real_t u_cut,
 RAJA_STORAGE
 void CalcPositionForNodes(Domain domain, const Real_t dt, Index_t numNode)
 {
-   RAJA::forall<node_exec_policy>(0, numNode, [=] (int i) {
-     domain.x(i) += domain.xd(i) * dt ;
-     domain.y(i) += domain.yd(i) * dt ;
-     domain.z(i) += domain.zd(i) * dt ;
+  auto x=&domain.x(0),y=&domain.y(0),z=&domain.z(0),
+    xd=&domain.xd(0),yd=&domain.yd(0),zd=&domain.zd(0);
+   RAJA::forall<target_exec_policy>(0, numNode, [=] (int i) {
+     x[i] += xd[i] * dt ;
+     y[i] += yd[i] * dt ;
+     z[i] += zd[i] * dt ;
    } );
 }
 
@@ -1438,7 +1413,13 @@ void LagrangeNodal(Domain domain)
 #if defined(SEDOV_SYNC_POS_VEL_EARLY)
    Domain_member fieldData[6] ;
 #endif
-
+   Index_t numNode = domain.numNode() ;
+  Real_t *xd = &domain.m_xd[0];
+  Real_t *yd = &domain.m_yd[0];
+  Real_t *zd = &domain.m_zd[0];
+  Real_t *x = &domain.m_x[0];
+  Real_t *y = &domain.m_y[0];
+  Real_t *z = &domain.m_z[0];
    const Real_t delt = domain.deltatime() ;
    Real_t u_cut = domain.u_cut() ;
 
@@ -1458,8 +1439,11 @@ void LagrangeNodal(Domain domain)
    
    ApplyAccelerationBoundaryConditionsForNodes(domain);
 
+
+#pragma omp target enter data map(to: xd[:numNode], yd[:numNode], zd[:numNode])
    CalcVelocityForNodes( domain, delt, u_cut, domain.numNode()) ;
 
+#pragma omp target enter data map(to: x[:numNode], y[:numNode], z[:numNode])
    CalcPositionForNodes( domain, delt, domain.numNode() );
 #if USE_MPI
 #if defined(SEDOV_SYNC_POS_VEL_EARLY)
@@ -1476,7 +1460,6 @@ void LagrangeNodal(Domain domain)
    CommSyncPosVel(domain) ;
 #endif
 #endif
-   
   return;
 }
 
@@ -1714,9 +1697,11 @@ void CalcElemVelocityGradient( const Real_t* const xvel,
 /******************************************/
 
 //RAJA_STORAGE
-void CalcKinematicsForElems( Domain* domain,
+void CalcKinematicsForElems( Domain domain,
                              Real_t deltaTime, Index_t numElem )
 {
+
+  auto x=&domain.x(0), y=&domain.y(0), z=&domain.z(0);
 
   // loop over all elements
   RAJA::forall<elem_exec_policy>(0, numElem, [=] (int k) { 
@@ -1732,31 +1717,31 @@ void CalcKinematicsForElems( Domain* domain,
 
     Real_t volume ;
     Real_t relativeVolume ;
-    const Index_t* const elemToNode = domain->nodelist(k) ;
+    const Index_t* const elemToNode = domain.nodelist(k) ;
 
     // get nodal coordinates from global arrays and copy into local arrays.
-    CollectDomainNodesToElemNodes(&domain->x(0),
-                                  &domain->y(0),
-                                  &domain->z(0),
+    CollectDomainNodesToElemNodes(x,
+                                  y,
+                                  z,
                                   elemToNode, x_local, y_local, z_local);
 
     // volume calculations
     volume = CalcElemVolume(x_local, y_local, z_local );
-    relativeVolume = volume / domain->volo(k) ;
-    domain->vnew(k) = relativeVolume ;
-    domain->delv(k) = relativeVolume - domain->v(k) ;
+    relativeVolume = volume / domain.volo(k) ;
+    domain.vnew(k) = relativeVolume ;
+    domain.delv(k) = relativeVolume - domain.v(k) ;
 
     // set characteristic length
-    domain->arealg(k) = CalcElemCharacteristicLength(x_local, y_local, z_local,
+    domain.arealg(k) = CalcElemCharacteristicLength(x_local, y_local, z_local,
                                              volume);
 
     // get nodal velocities from global array and copy into local arrays.
     for( Index_t lnode=0 ; lnode<8 ; ++lnode )
     {
       Index_t gnode = elemToNode[lnode];
-      xd_local[lnode] = domain->xd(gnode);
-      yd_local[lnode] = domain->yd(gnode);
-      zd_local[lnode] = domain->zd(gnode);
+      xd_local[lnode] = domain.xd(gnode);
+      yd_local[lnode] = domain.yd(gnode);
+      zd_local[lnode] = domain.zd(gnode);
     }
 
     Real_t dt2 = Real_t(0.5) * deltaTime;
@@ -1774,9 +1759,9 @@ void CalcKinematicsForElems( Domain* domain,
                                B, detJ, D );
 
     // put velocity gradient quantities into their global arrays.
-    domain->dxx(k) = D[0];
-    domain->dyy(k) = D[1];
-    domain->dzz(k) = D[2];
+    domain.dxx(k) = D[0];
+    domain.dyy(k) = D[1];
+    domain.dzz(k) = D[2];
   } );
 }
 
@@ -1791,10 +1776,11 @@ void CalcLagrangeElements(Domain domain)
 
       domain.AllocateStrains(numElem);
 
-      CalcKinematicsForElems(&domain, deltatime, numElem) ;
+      CalcKinematicsForElems(domain, deltatime, numElem) ;
 
       auto *dxx=&domain.dxx(0), *dyy=&domain.dyy(0), *dzz=&domain.dzz(0), *vdov_v=&domain.vdov(0);
-#pragma omp target enter data map(to: dxx[:numElem], dyy[:numElem], dzz[:numElem], vdov_v[:numElem])
+      auto vnew=&domain.vnew(0);
+#pragma omp target enter data map(to: dxx[:numElem], dyy[:numElem], dzz[:numElem], vdov_v[:numElem], vnew[:numElem])
       {
 	Timer t("CalcLagrangeElements_"+std::to_string(numElem));
       // element loop to do some stuff not included in the elemlib function.
@@ -1811,18 +1797,16 @@ void CalcLagrangeElements(Domain domain)
         });
      } // record time
 
-#pragma omp target exit data map(from: dxx[:numElem], dyy[:numElem], dzz[:numElem], vdov_v[:numElem])
-      RAJA::forall<elem_exec_policy>(0, numElem, [=] (int k) {
+      bool isValid = true;
+        RAJA::forall<target_exec_policy>(0, numElem, [=,&isValid] (int k) {
         // See if any volumes are negative, and take appropriate action.
-         if (domain.vnew(k) <= Real_t(0.0))
+         if (vnew[k] <= Real_t(0.0))
         {
-#if USE_MPI           
-           MPI_Abort(MPI_COMM_WORLD, VolumeError) ;
-#else
-           exit(VolumeError);
-#endif
+          isValid = false;
         }
       } );
+#pragma omp target exit data map(from: dxx[:numElem], dyy[:numElem], dzz[:numElem], vdov_v[:numElem])\
+  map(delete: vnew[:numElem])
       domain.DeallocateStrains();
    }
 }
@@ -2811,11 +2795,58 @@ void LagrangeLeapFrog(Domain& domain)
 #if defined(SEDOV_SYNC_POS_VEL_LATE)
    Domain_member fieldData[6] ;
 #endif
+   Index_t numNode = domain.numNode() ;
+   auto volo=&domain.volo(0), v=&domain.v(0);
+   Real_t *ss = &domain.m_ss[0];
+   Real_t *elemMass = &domain.m_elemMass[0];
+  Real_t *xd = &domain.m_xd[0];
+  Real_t *yd = &domain.m_yd[0];
+  Real_t *zd = &domain.m_zd[0];
+  auto *p = &domain.p(0), *q = &domain.q(0);
+  Real_t *x = &domain.m_x[0];
+  Real_t *y = &domain.m_y[0];
+  Real_t *z = &domain.m_z[0];
+
+  Index_t *nodelist = &domain.m_nodelist[0];
+  Index_t numElem = domain.numElem();
+  Index_t numElem8 = numElem * 8;
+  Index_t *nodeElemStart = &domain.m_nodeElemStart[0];
+  Index_t len1 = numNode + 1;
+  Index_t *nodeElemCornerList = &domain.m_nodeElemCornerList[0];
+  Index_t len2 = nodeElemStart[numNode];
+  Index_t size = domain.sizeX();
+  Index_t numNodeBC = (size+1)*(size+1) ;
+  auto symmX=&domain.m_symmX[0], symmY=&domain.m_symmY[0], symmZ=&domain.m_symmZ[0];
+
+ auto *fx = &domain.fx(0), *fy = &domain.fy(0), *fz = &domain.fz(0);
+ auto nodalMass=&domain.nodalMass(0),
+   xdd=&domain.xdd(0), ydd=&domain.ydd(0), zdd=&domain.zdd(0);
+
+#pragma omp target enter data map(alloc: fx[:numNode], fy[:numNode], fz[:numNode], \
+                                  xdd[:numNode], ydd[:numNode], zdd[:numNode])
+#pragma omp target enter data map(to: p[:numElem], q[:numElem],         \
+                                  x[:numNode], y[:numNode], z[:numNode], \
+                                  nodelist[:numElem8],                  \
+                                  nodeElemStart[:len1], nodeElemCornerList[:len2], \
+                                  volo[:numElem], v[:numElem],          \
+                                  ss[:numElem], elemMass[:numElem],     \
+                                  xd[:numNode], yd[:numNode], zd[:numNode], \
+                                  nodalMass[:numNode], symmX[:numNodeBC], symmY[:numNodeBC], symmZ[:numNodeBC])
+
 
    /* calculate nodal forces, accelerations, velocities, positions, with
     * applied boundary conditions and slide surface considerations */
    LagrangeNodal(domain);
 
+#pragma omp target exit data map(from: x[:numNode], y[:numNode], z[:numNode], \
+                                 xd[:numNode], yd[:numNode], zd[:numNode]) \
+  map(delete: nodeElemStart[:len1], nodeElemCornerList[:len2],          \
+      ss[:numElem], elemMass[:numElem],                                 \
+      nodelist[:numElem8], volo[:numElem], v[:numElem],                 \
+      fx[:numNode], fy[:numNode], fz[:numNode],                         \
+      symmX[:numNodeBC], symmY[:numNodeBC], symmZ[:numNodeBC],          \
+      xdd[:numNode], ydd[:numNode], zdd[:numNode])                      \
+  map(from: p[:numElem], q[:numElem])
 
 #if defined(SEDOV_SYNC_POS_VEL_LATE)
 #endif
