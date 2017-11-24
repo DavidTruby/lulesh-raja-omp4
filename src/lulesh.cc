@@ -179,7 +179,7 @@ public:
 	double alreadyElapsed = found->second.second;
 
 	found->second.first = (found->second.first)+1;
-	found->second.second = (found->second.second)+elapsed;	
+	found->second.second = alreadyElapsed+elapsed;	
       } else
         Timer::kernelTimes.emplace(std::make_pair(kernelName, std::make_pair(0, elapsed)));
   }
@@ -584,12 +584,6 @@ void IntegrateStressForElems( Domain domain,
                               Real_t *sigxx, Real_t *sigyy, Real_t *sigzz,
                               Real_t *determ, Index_t numElem, Index_t numNode)
 {
-#if USE_OMP
-   Index_t numthreads = omp_get_max_threads();
-#else
-   Index_t numthreads = 1;
-#endif
-
    Index_t numElem8 = numElem * 8 ;
 
    Real_t *x = &domain.m_x[0];
@@ -603,9 +597,7 @@ void IntegrateStressForElems( Domain domain,
    Index_t *nodelist = &domain.m_nodelist[0];
 
    Index_t *nodeElemStart = &domain.m_nodeElemStart[0];
-   Index_t len1 = numNode + 1;
    Index_t *nodeElemCornerList = &domain.m_nodeElemCornerList[0];
-   Index_t len2 = nodeElemStart[numNode];
 
   Real_t *fx_elem = Allocate<Real_t>(numElem8) ;
   Real_t *fy_elem = Allocate<Real_t>(numElem8) ;
@@ -871,9 +863,7 @@ void CalcFBHourglassForceForElems( Domain &domain,
   Real_t *fz = &domain.m_fz[0];
 
   Index_t *nodeElemStart = &domain.m_nodeElemStart[0];
-  Index_t len1 = numNode + 1;
   Index_t *nodeElemCornerList = &domain.m_nodeElemCornerList[0];
-  Index_t len2 = nodeElemStart[numNode];
 
   /* start loop over elements */
   // to: hourg, numthreads (these are firstprivate)
@@ -1164,7 +1154,6 @@ void CalcHourglassControlForElems(Domain domain,
    auto volo=&domain.volo(0), v=&domain.v(0),
      x=&domain.x(0), y=&domain.y(0), z=&domain.z(0);
    Index_t *nodelist=domain.m_nodelist.data();
-   auto fx=&domain.fx(0), fy=&domain.fy(0), fz=&domain.fz(0);
    Real_t *ss = &domain.m_ss[0];
    Real_t *elemMass = &domain.m_elemMass[0];
 
@@ -1177,13 +1166,8 @@ void CalcHourglassControlForElems(Domain domain,
    Index_t *nodeElemCornerList = &domain.m_nodeElemCornerList[0];
    Index_t len2 = nodeElemStart[numNode];
 
-#pragma omp target enter data map(to: volo[:numElem], v[:numElem], nodelist[:numElem8], \
-                                  x[:numNode], y[:numNode], z[:numNode], \
-                                  fx[:numNode], fy[:numNode], fz[:numNode],           \
-                                  ss[:numElem], elemMass[:numElem], \
-                                  xd[:numNode], yd[:numNode], zd[:numNode], \
-                                  nodeElemStart[:len1], nodeElemCornerList[:len2])\
-   map(alloc: determ[:numElem], dvdx[:numElem8], dvdy[:numElem8], dvdz[:numElem8], \
+   #pragma omp target enter data \
+   map(alloc: dvdx[:numElem8], dvdy[:numElem8], dvdz[:numElem8], \
       x8n[:numElem8], y8n[:numElem8], z8n[:numElem8])
 
    bool failed = false;
@@ -1230,7 +1214,7 @@ void CalcHourglassControlForElems(Domain domain,
                                     determ, x8n, y8n, z8n, dvdx, dvdy, dvdz,
                                     hgcoef, numElem, domain.numNode()) ;
    }
-#pragma omp target exit data map(from: fx[:numNode], fy[:numNode], fz[:numNode]) \
+#pragma omp target exit data \
   map(delete: nodeElemStart[:len1], nodeElemCornerList[:len2],          \
       ss[:numElem], elemMass[:numElem],                                 \
       determ[:numElem], dvdx[:numElem8],                                \
@@ -1278,10 +1262,26 @@ void CalcVolumeForceForElems(Domain domain)
 
      Real_t *fz = &domain.m_fz[0];
      Index_t numElem8 = numElem * 8 ;
-#pragma omp target enter data map(to: p[:numElem], q[:numElem]) map(alloc: sigxx[:numElem], sigyy[:numElem], sigzz[:numElem])\
-  map(to: x[:numNode], y[:numNode], z[:numNode],                        \
-      nodelist[:numElem8], fx[:numNode], fy[:numNode], fz[:numNode], nodeElemStart[:len1], nodeElemCornerList[:len2]) \
-  map(alloc: determ[:numElem])
+
+
+     auto volo=&domain.volo(0), v=&domain.v(0);
+     Real_t *ss = &domain.m_ss[0];
+     Real_t *elemMass = &domain.m_elemMass[0];
+
+     Real_t *xd = &domain.m_xd[0];
+     Real_t *yd = &domain.m_yd[0];
+     Real_t *zd = &domain.m_zd[0];
+
+
+#pragma omp target enter data map(to: p[:numElem], q[:numElem], \
+      x[:numNode], y[:numNode], z[:numNode],                        \
+      nodelist[:numElem8], fx[:numNode], fy[:numNode], fz[:numNode],\
+      nodeElemStart[:len1], nodeElemCornerList[:len2],\
+      volo[:numElem], v[:numElem],  \
+      ss[:numElem], elemMass[:numElem],                                 \
+      xd[:numNode], yd[:numNode], zd[:numNode])
+
+#pragma omp target enter data map(alloc: determ[:numElem], sigxx[:numElem], sigyy[:numElem], sigzz[:numElem])
       /* Sum contributions to total stress tensor */
       InitStressTermsForElems(domain, sigxx, sigyy, sigzz, numElem);
 
@@ -1303,13 +1303,16 @@ void CalcVolumeForceForElems(Domain domain)
         printf("Error in determ\n");
         exit(VolumeError);
       }
-#pragma omp target exit data                                            \
-  map(delete: sigxx[:numElem], sigyy[:numElem], sigzz[:numElem],        \
-      x[:numNode], y[:numNode], z[:numNode], nodelist[:numElem8],       \
-      nodeElemCornerList[:len2], nodeElemStart[:len1])                  \
-  map(from: determ[:numElem], fx[:numNode], fy[:numNode], fz[:numNode], p[:numElem], q[:numElem])
 
       CalcHourglassControlForElems(domain, determ, hgcoef) ;
+#pragma omp target exit data map(from: fx[:numNode], fy[:numNode], fz[:numNode]) \
+  map(delete: nodeElemStart[:len1], nodeElemCornerList[:len2],          \
+      ss[:numElem], elemMass[:numElem],                                 \
+      xd[:numNode], yd[:numNode], zd[:numNode],       \
+      nodelist[:numElem8], volo[:numElem], v[:numElem], x[:numNode], y[:numNode], z[:numNode]) \
+  map(from: p[:numElem], q[:numElem])
+
+#pragma omp target exit data map(delete: determ[:numElem], sigzz[:numElem], sigyy[:numElem], sigxx[:numElem])
 
       Release(&determ) ;
       Release(&sigzz) ;
@@ -1845,9 +1848,6 @@ void CalcMonotonicQGradientsForElems(Domain domain)
         *delx_zeta = &domain.delx_zeta(0), *delv_zeta = &domain.delv_zeta(0),
         *delx_xi = &domain.delx_xi(0), *delv_xi = &domain.delv_xi(0),
         *delx_eta = &domain.delx_eta(0), *delv_eta = &domain.delv_eta(0);
-   Int_t allElem = domain.numElem() + 2 * domain.sizeX() * domain.sizeY() +
-                   2 * domain.sizeX() * domain.sizeZ() +
-                   2 * domain.sizeY() * domain.sizeZ();
 
 #pragma omp target enter data map(to: nodelist[:numElem*8], x[:numElem], y[:numElem], z[:numElem],\
    xd[:numElem], yd[:numElem], zd[:numElem], volo[:numElem], vnew[:numElem], delx_zeta[:numElem],\
@@ -2019,10 +2019,6 @@ void CalcMonotonicQRegionForElems(Domain domain,
    Real_t qqc_monoq = domain.qqc_monoq();
 
    Int_t numElem = domain.numElem();
-   Int_t allElem = domain.numElem() +
-     2*domain.sizeX()*domain.sizeY() +
-     2*domain.sizeX()*domain.sizeZ() +
-     2*domain.sizeY()*domain.sizeZ();
    auto delv_xi=&domain.delv_xi(0), delv_eta=&domain.delv_eta(0), delv_zeta=&domain.delv_zeta(0);
    auto elemBC=&domain.elemBC(0), lxim=&domain.lxim(0), lxip=&domain.lxip(0), letam=&domain.letam(0),
      letap=&domain.letap(0), lzetam=&domain.lzetam(0), lzetap=&domain.lzetap(0);

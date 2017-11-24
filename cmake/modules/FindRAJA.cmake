@@ -17,7 +17,7 @@ set(RAJA_LIBRARIES ${RAJA_LIBRARY})
 set(RAJA_INCLUDE_DIRS ${RAJA_INCLUDE_DIR})
 
 add_library(RAJA INTERFACE)
-target_include_directories(RAJA INTERFACE ${RAJA_INCLUDE_DIRS})
+target_include_directories(RAJA SYSTEM INTERFACE ${RAJA_INCLUDE_DIRS})
 #target_link_libraries(RAJA INTERFACE ${RAJA_LIBRARIES})
 target_compile_features(RAJA INTERFACE ${RAJA_CXX_FEATURES})
 #target_compile_options(RAJA INTERFACE ${OpenMP_CXX_FLAGS})
