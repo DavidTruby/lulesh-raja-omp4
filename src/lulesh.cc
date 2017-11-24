@@ -1702,9 +1702,13 @@ void CalcKinematicsForElems( Domain domain,
 {
 
   auto x=&domain.x(0), y=&domain.y(0), z=&domain.z(0);
-
+  auto *nodelist=domain.nodelist(0);
+  auto volo=&domain.volo(0),vnew=&domain.vnew(0),delv=&domain.delv(0),v=&domain.v(0);
+  auto arealg=&domain.arealg(0);
+  auto dxx=&domain.dxx(0),dyy=&domain.dyy(0),dzz=&domain.dzz(0);
+  auto xd=&domain.xd(0),yd=&domain.yd(0),zd=&domain.zd(0);
   // loop over all elements
-  RAJA::forall<elem_exec_policy>(0, numElem, [=] (int k) { 
+  RAJA::forall<target_exec_policy>(0, numElem, [=,domain=0] (int k) { 
     Real_t B[3][8] ; /** shape function derivatives */
     Real_t D[6] ;
     Real_t x_local[8] ;
@@ -1717,7 +1721,7 @@ void CalcKinematicsForElems( Domain domain,
 
     Real_t volume ;
     Real_t relativeVolume ;
-    const Index_t* const elemToNode = domain.nodelist(k) ;
+    const Index_t* const elemToNode = &nodelist[Index_t(8)*k] ;
 
     // get nodal coordinates from global arrays and copy into local arrays.
     CollectDomainNodesToElemNodes(x,
@@ -1727,21 +1731,21 @@ void CalcKinematicsForElems( Domain domain,
 
     // volume calculations
     volume = CalcElemVolume(x_local, y_local, z_local );
-    relativeVolume = volume / domain.volo(k) ;
-    domain.vnew(k) = relativeVolume ;
-    domain.delv(k) = relativeVolume - domain.v(k) ;
+    relativeVolume = volume / volo[k] ;
+    vnew[k] = relativeVolume ;
+    delv[k] = relativeVolume - v[k] ;
 
     // set characteristic length
-    domain.arealg(k) = CalcElemCharacteristicLength(x_local, y_local, z_local,
+    arealg[k] = CalcElemCharacteristicLength(x_local, y_local, z_local,
                                              volume);
 
     // get nodal velocities from global array and copy into local arrays.
     for( Index_t lnode=0 ; lnode<8 ; ++lnode )
     {
       Index_t gnode = elemToNode[lnode];
-      xd_local[lnode] = domain.xd(gnode);
-      yd_local[lnode] = domain.yd(gnode);
-      zd_local[lnode] = domain.zd(gnode);
+      xd_local[lnode] = xd[gnode];
+      yd_local[lnode] = yd[gnode];
+      zd_local[lnode] = zd[gnode];
     }
 
     Real_t dt2 = Real_t(0.5) * deltaTime;
@@ -1759,10 +1763,11 @@ void CalcKinematicsForElems( Domain domain,
                                B, detJ, D );
 
     // put velocity gradient quantities into their global arrays.
-    domain.dxx(k) = D[0];
-    domain.dyy(k) = D[1];
-    domain.dzz(k) = D[2];
+    dxx[k] = D[0];
+    dyy[k] = D[1];
+    dzz[k] = D[2];
   } );
+
 }
 
 /******************************************/
@@ -1774,13 +1779,15 @@ void CalcLagrangeElements(Domain domain)
    if (numElem > 0) {
       const Real_t deltatime = domain.deltatime() ;
 
+      auto vnew=&domain.vnew(0),delv=&domain.delv(0);
+      auto vdov_v = &domain.vdov(0);
+
       domain.AllocateStrains(numElem);
+      auto dxx=&domain.dxx(0),dyy=&domain.dyy(0),dzz=&domain.dzz(0);
+#pragma omp target enter data map(alloc: delv[:numElem], dxx[:numElem], dyy[:numElem], dzz[:numElem])
 
       CalcKinematicsForElems(domain, deltatime, numElem) ;
 
-      auto *dxx=&domain.dxx(0), *dyy=&domain.dyy(0), *dzz=&domain.dzz(0), *vdov_v=&domain.vdov(0);
-      auto vnew=&domain.vnew(0);
-#pragma omp target enter data map(to: dxx[:numElem], dyy[:numElem], dzz[:numElem], vdov_v[:numElem], vnew[:numElem])
       {
 	Timer t("CalcLagrangeElements_"+std::to_string(numElem));
       // element loop to do some stuff not included in the elemlib function.
@@ -1788,7 +1795,7 @@ void CalcLagrangeElements(Domain domain)
           // calc strain rate and apply as constraint (only done in FB element)
           Real_t vdov = dxx[k] + dyy[k] + dzz[k];
           Real_t vdovthird = vdov/Real_t(3.0) ;
-	
+
           // make the rate of deformation tensor deviatoric
           vdov_v[k] = vdov ;
           dxx[k] -= vdovthird ;
@@ -1805,8 +1812,8 @@ void CalcLagrangeElements(Domain domain)
           isValid = false;
         }
       } );
-#pragma omp target exit data map(from: dxx[:numElem], dyy[:numElem], dzz[:numElem], vdov_v[:numElem])\
-  map(delete: vnew[:numElem])
+
+#pragma omp target exit data map(delete: dxx[:numElem], dyy[:numElem], dzz[:numElem])
       domain.DeallocateStrains();
    }
 }
@@ -2688,8 +2695,28 @@ void UpdateVolumesForElems(Domain domain,
 
 RAJA_STORAGE
 void LagrangeElements(Domain domain, Index_t numElem)
-{
+{      auto x=&domain.x(0), y=&domain.y(0), z=&domain.z(0);
+  auto *nodelist=domain.nodelist(0);
+  auto volo=&domain.volo(0),vnew=&domain.vnew(0),delv=&domain.delv(0),v=&domain.v(0);
+  auto arealg=&domain.arealg(0);
+  auto xd=&domain.xd(0),yd=&domain.yd(0),zd=&domain.zd(0);
+  auto numElem8 = numElem*8;
+  auto numNode = domain.numNode();
+  auto vdov_v = &domain.vdov(0);
+#pragma omp target enter data map(to: x[:numNode], y[:numNode], z[:numNode], \
+                                  nodelist[:numElem8], volo[:numElem], v[:numElem], \
+                                  arealg[:numElem], xd[:numNode], yd[:numNode], zd[:numNode], \
+                                  vdov_v[:numElem])                     \
+  map(alloc: vnew[:numElem])
+
+
   CalcLagrangeElements(domain) ;
+#pragma omp target exit data map(from: vdov_v[:numElem], vnew[:numElem], x[:numNode], \
+                                 y[:numNode], z[:numNode],              \
+                                 nodelist[:numElem8], volo[:numElem], v[:numElem], \
+                                 arealg[:numElem], xd[:numNode], yd[:numNode], zd[:numNode], \
+                                 delv[:numElem])
+
 
   /* Calculate Q.  (Monotonic q option requires communication) */
   CalcQForElems(domain) ;
