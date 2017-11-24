@@ -1245,41 +1245,6 @@ void CalcVolumeForceForElems(Domain domain)
       Real_t *sigzz  = Allocate<Real_t>(numElem) ;
       Real_t *determ = Allocate<Real_t>(numElem) ;
 
-      auto *p = &domain.p(0), *q = &domain.q(0);
-      Real_t *x = &domain.m_x[0];
-      Real_t *y = &domain.m_y[0];
-      Real_t *z = &domain.m_z[0];
-
-      Real_t *fx = &domain.m_fx[0];
-      Real_t *fy = &domain.m_fy[0];
-      Index_t *nodelist = &domain.m_nodelist[0];
-
-      auto numNode = domain.numNode();
-      Index_t *nodeElemStart = &domain.m_nodeElemStart[0];
-      Index_t len1 = numNode + 1;
-      Index_t *nodeElemCornerList = &domain.m_nodeElemCornerList[0];
-      Index_t len2 = nodeElemStart[numNode];
-
-     Real_t *fz = &domain.m_fz[0];
-     Index_t numElem8 = numElem * 8 ;
-
-
-     auto volo=&domain.volo(0), v=&domain.v(0);
-     Real_t *ss = &domain.m_ss[0];
-     Real_t *elemMass = &domain.m_elemMass[0];
-
-     Real_t *xd = &domain.m_xd[0];
-     Real_t *yd = &domain.m_yd[0];
-     Real_t *zd = &domain.m_zd[0];
-
-
-#pragma omp target enter data map(to: p[:numElem], q[:numElem], \
-      x[:numNode], y[:numNode], z[:numNode],                        \
-      nodelist[:numElem8], fx[:numNode], fy[:numNode], fz[:numNode],\
-      nodeElemStart[:len1], nodeElemCornerList[:len2],\
-      volo[:numElem], v[:numElem],  \
-      ss[:numElem], elemMass[:numElem],                                 \
-      xd[:numNode], yd[:numNode], zd[:numNode])
 
 #pragma omp target enter data map(alloc: determ[:numElem], sigxx[:numElem], sigyy[:numElem], sigzz[:numElem])
       /* Sum contributions to total stress tensor */
@@ -1305,12 +1270,6 @@ void CalcVolumeForceForElems(Domain domain)
       }
 
       CalcHourglassControlForElems(domain, determ, hgcoef) ;
-#pragma omp target exit data map(from: fx[:numNode], fy[:numNode], fz[:numNode]) \
-  map(delete: nodeElemStart[:len1], nodeElemCornerList[:len2],          \
-      ss[:numElem], elemMass[:numElem],                                 \
-      xd[:numNode], yd[:numNode], zd[:numNode],       \
-      nodelist[:numElem8], volo[:numElem], v[:numElem], x[:numNode], y[:numNode], z[:numNode]) \
-  map(from: p[:numElem], q[:numElem])
 
 #pragma omp target exit data map(delete: determ[:numElem], sigzz[:numElem], sigyy[:numElem], sigxx[:numElem])
 
@@ -1333,8 +1292,37 @@ RAJA_STORAGE void CalcForceForNodes(Domain domain)
            true, false) ;
 #endif  
 
-  auto *fx = &domain.fx(0), *fy = &domain.fy(0), *fz = &domain.fz(0);
+ 
+
+  auto volo=&domain.volo(0), v=&domain.v(0);
+  Real_t *ss = &domain.m_ss[0];
+  Real_t *elemMass = &domain.m_elemMass[0];
+
+  Real_t *xd = &domain.m_xd[0];
+  Real_t *yd = &domain.m_yd[0];
+  Real_t *zd = &domain.m_zd[0];
+  auto *p = &domain.p(0), *q = &domain.q(0);
+  Real_t *x = &domain.m_x[0];
+  Real_t *y = &domain.m_y[0];
+  Real_t *z = &domain.m_z[0];
+
+  Index_t *nodelist = &domain.m_nodelist[0];
+  Index_t numElem = domain.numElem();
+  Index_t numElem8 = numElem * 8;
+  Index_t *nodeElemStart = &domain.m_nodeElemStart[0];
+  Index_t len1 = numNode + 1;
+  Index_t *nodeElemCornerList = &domain.m_nodeElemCornerList[0];
+  Index_t len2 = nodeElemStart[numNode];
+
+ auto *fx = &domain.fx(0), *fy = &domain.fy(0), *fz = &domain.fz(0);
 #pragma omp target enter data map(alloc: fx[:numNode], fy[:numNode], fz[:numNode])
+#pragma omp target enter data map(to: p[:numElem], q[:numElem],         \
+                                  x[:numNode], y[:numNode], z[:numNode], \
+                                  nodelist[:numElem8],                  \
+                                  nodeElemStart[:len1], nodeElemCornerList[:len2], \
+                                  volo[:numElem], v[:numElem],          \
+                                  ss[:numElem], elemMass[:numElem],     \
+                                  xd[:numNode], yd[:numNode], zd[:numNode])
 
   RAJA::forall<ExecPolicy>(0, numNode, [=] (int i) {
      fx[i] = Real_t(0.0) ;
@@ -1342,10 +1330,9 @@ RAJA_STORAGE void CalcForceForNodes(Domain domain)
      fz[i] = Real_t(0.0) ;
   } );
 
-#pragma omp target exit data map(from: fx[:numNode], fy[:numNode], fz[:numNode])
-
   /* Calcforce calls partial, force, hourq */
   CalcVolumeForceForElems(domain) ;
+
 
 #if USE_MPI  
   Domain_member fieldData[3] ;
@@ -1358,6 +1345,12 @@ RAJA_STORAGE void CalcForceForNodes(Domain domain)
            true, false) ;
   CommSBN(*domain, 3, fieldData) ;
 #endif  
+#pragma omp target exit data map(from: fx[:numNode], fy[:numNode], fz[:numNode]) \
+  map(delete: nodeElemStart[:len1], nodeElemCornerList[:len2],          \
+      ss[:numElem], elemMass[:numElem],                                 \
+      xd[:numNode], yd[:numNode], zd[:numNode],                         \
+      nodelist[:numElem8], volo[:numElem], v[:numElem], x[:numNode], y[:numNode], z[:numNode]) \
+  map(from: p[:numElem], q[:numElem])
 }
 
 /******************************************/
