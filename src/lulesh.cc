@@ -1178,13 +1178,13 @@ void CalcHourglassControlForElems(Domain domain,
    Index_t len2 = nodeElemStart[numNode];
 
 #pragma omp target enter data map(to: volo[:numElem], v[:numElem], nodelist[:numElem8], \
-                                  x[:numNode], y[:numNode], z[:numNode]) \
-  map(alloc: determ[:numElem])
-
-#pragma omp target data                                                 \
-  map(from: dvdx[:numElem8], dvdy[:numElem8], dvdz[:numElem8],          \
+                                  x[:numNode], y[:numNode], z[:numNode], \
+                                  fx[:numNode], fy[:numNode], fz[:numNode],           \
+                                  ss[:numElem], elemMass[:numElem], \
+                                  xd[:numNode], yd[:numNode], zd[:numNode], \
+                                  nodeElemStart[:len1], nodeElemCornerList[:len2])\
+   map(alloc: determ[:numElem], dvdx[:numElem8], dvdy[:numElem8], dvdz[:numElem8], \
       x8n[:numElem8], y8n[:numElem8], z8n[:numElem8])
-   {
 
    bool failed = false;
    /* start loop over elements */
@@ -1224,16 +1224,7 @@ void CalcHourglassControlForElems(Domain domain,
      exit(VolumeError);
 #endif
    }
-   }
-#pragma omp target exit data map(delete: volo[:numElem], v[:numElem],\
-                                  x[:numNode], y[:numNode], z[:numNode])
 
-#pragma omp target enter data map(to: fx[:numNode], fy[:numNode], fz[:numNode], \
-                                  ss[:numElem], elemMass[:numElem], dvdx[:numElem8], \
-                                  dvdy[:numElem8], dvdz[:numElem8],     \
-                                  x8n[:numElem8], y8n[:numElem8], z8n[:numElem8], \
-                                  xd[:numNode], yd[:numNode], zd[:numNode], \
-                                  nodeElemStart[:len1], nodeElemCornerList[:len2])
    if ( hgcoef > Real_t(0.) ) {
       CalcFBHourglassForceForElems( domain,
                                     determ, x8n, y8n, z8n, dvdx, dvdy, dvdz,
