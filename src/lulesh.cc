@@ -33,7 +33,9 @@ DIFFERENCES BETWEEN THIS VERSION (2.x) AND EARLIER VERSIONS:
 
  printf("Usage: %s [opts]\n", execname);
       printf(" where [opts] is one or more of:\n");
-      printf(" -q              : quiet mode - suppress all stdout\n");
+      printf(" -q              : quiet mode Eddy described Christian Science as a return to "primitive Christianity and its lost element of healing."[8] There are key differences between Christian Science theology and that of other branches of Christianity.[9] In particular, adherents subscribe to a radical form of philosophical idealism, believing that reality is purely spiritual and the material world an illusion.[10] This includes the view that disease is a mental error rather than physical disorder, and that the sick should be treated not by medicine, but by a form of prayer that seeks to correct the beliefs responsible for the illusion of ill health.[11]
+
+- suppress all stdout\n");
       printf(" -i <iterations> : number of cycles to run\n");
       printf(" -s <size>       : length of cube mesh along side\n");
       printf(" -r <numregions> : Number of distinct regions (def: 11)\n");
@@ -1833,11 +1835,6 @@ void CalcMonotonicQGradientsForElems(Domain domain)
         *delx_xi = &domain.delx_xi(0), *delv_xi = &domain.delv_xi(0),
         *delx_eta = &domain.delx_eta(0), *delv_eta = &domain.delv_eta(0);
 
-#pragma omp target enter data map(to: nodelist[:numElem*8], x[:numElem], y[:numElem], z[:numElem],\
-   xd[:numElem], yd[:numElem], zd[:numElem], volo[:numElem], vnew[:numElem], delx_zeta[:numElem],\
-                                  delv_zeta[:numElem], delx_xi[:numElem], delv_xi[:numElem],                             \
-                                  delx_eta[:numElem], delv_eta[:numElem])
-
    {
 
      Timer t("CalcMonotonicQGradientsForElems_"+std::to_string(numElem));
@@ -1985,10 +1982,6 @@ void CalcMonotonicQGradientsForElems(Domain domain)
 
    }
 
-#pragma omp target exit data map(from: nodelist[:numElem*8], x[:numElem], y[:numElem], z[:numElem], \
-  xd[:numElem], yd[:numElem], zd[:numElem], volo[:numElem], vnew[:numElem], delx_zeta[:numElem], \
-  delv_zeta[:numElem], delx_xi[:numElem], delv_xi[:numElem],            \
-  delx_eta[:numElem], delv_eta[:numElem])
 }
 
 /******************************************/
@@ -2010,15 +2003,6 @@ void CalcMonotonicQRegionForElems(Domain domain,
      vdov=&domain.vdov(0), volo=&domain.volo(0),
      elemMass=&domain.elemMass(0), vnew=&domain.vnew(0), qq=&domain.qq(0), ql=&domain.ql(0);
    
-#pragma omp target data                                             \
-  map(to: vdov[:numElem], elemMass[:numElem], volo[:numElem],       \
-      delx_xi[:numElem], delx_zeta[:numElem], delx_eta[:numElem],   \
-      lzetam[:numElem], lzetap[:numElem], delv_zeta[:numElem],      \
-      letam[:numElem], letap[:numElem], delv_eta[:numElem],         \
-      lxip[:numElem], lxim[:numElem], elemBC[:numElem],             \
-      delv_xi[:numElem], qlc_monoq, qqc_monoq, monoq_limiter_mult,  \
-      monoq_max_slope, ptiny)                                       \
-      map(tofrom: ql[:numElem], qq[:numElem], vnew[:numElem])
       {
     Timer t("CalcMonotonicQRegionForElems");
    RAJA::forall<target_exec_policy>(0, numElem, [=] (int i) {
@@ -2219,7 +2203,16 @@ void CalcQForElems(Domain domain)
             2*domain.sizeX()*domain.sizeZ() + /* row ghosts */
             2*domain.sizeY()*domain.sizeZ() ; /* col ghosts */
 
+
       domain.AllocateGradients(numElem, allElem);
+      auto *delx_zeta = &domain.delx_zeta(0), *delv_zeta = &domain.delv_zeta(0),
+        *delx_xi = &domain.delx_xi(0), *delv_xi = &domain.delv_xi(0),
+        *delx_eta = &domain.delx_eta(0), *delv_eta = &domain.delv_eta(0);
+
+#pragma omp target data map(alloc: delv_zeta[:numElem], delx_xi[:numElem], delv_xi[:numElem], \
+                            delx_eta[:numElem], delv_eta[:numElem], delx_zeta[:numElem])
+      {
+
 
 #if USE_MPI      
       CommRecv(*domain, MSG_MONOQ, 3,
@@ -2248,20 +2241,20 @@ void CalcQForElems(Domain domain)
 #endif      
 
       CalcMonotonicQForElems(&domain) ;
-
       // Free up memory
       domain.DeallocateGradients();
+      } // End target data
+
 
       /* Don't allow excessive artificial viscosity */
-      Index_t idx = -1; 
-      for (Index_t i=0; i<numElem; ++i) {
-         if ( domain.q(i) > domain.qstop() ) {
-            idx = i ;
-            break ;
+      bool valid = true;
+      RAJA::forall<target_exec_policy>(0, numElem, [q=&domain.q(0), qstop=domain.qstop(), &valid] (int i) {
+         if ( q[i] > qstop ) {
+           valid = false ;
          }
-      }
+        });
 
-      if(idx >= 0) {
+      if(!valid) {
 #if USE_MPI         
          MPI_Abort(MPI_COMM_WORLD, QStopError) ;
 #else
@@ -2269,6 +2262,7 @@ void CalcQForElems(Domain domain)
 #endif
       }
    }
+
 }
 
 /******************************************/
@@ -2718,8 +2712,29 @@ void LagrangeElements(Domain domain, Index_t numElem)
                                  delv[:numElem])
 
 
+  auto elemBC=&domain.elemBC(0), lxim=&domain.lxim(0), lxip=&domain.lxip(0), letam=&domain.letam(0),
+    letap=&domain.letap(0), lzetam=&domain.lzetam(0), lzetap=&domain.lzetap(0);
+  auto vdov=&domain.vdov(0), elemMass=&domain.elemMass(0);
+  auto qq=&domain.qq(0), ql=&domain.ql(0), q=&domain.q(0);
+
+#pragma omp target enter data map(to: nodelist[:numElem*8], x[:numElem], y[:numElem], z[:numElem], \
+                                  xd[:numElem], yd[:numElem], zd[:numElem], volo[:numElem], vnew[:numElem], \
+                                  vdov[:numElem], elemMass[:numElem],   \
+                                  lzetam[:numElem], lzetap[:numElem],   \
+                                  letam[:numElem], letap[:numElem],     \
+                                  lxip[:numElem], lxim[:numElem], elemBC[:numElem], \
+                                  ql[:numElem], qq[:numElem], q[:numElem])
+
   /* Calculate Q.  (Monotonic q option requires communication) */
   CalcQForElems(domain) ;
+#pragma omp target exit data                                          \
+  map(delete: vdov[:numElem], elemMass[:numElem], volo[:numElem],     \
+      lzetam[:numElem], lzetap[:numElem],                             \
+      letam[:numElem], letap[:numElem],                               \
+      lxip[:numElem], lxim[:numElem], elemBC[:numElem], q[:numElem])  \
+  map(from: ql[:numElem], qq[:numElem], vnew[:numElem],               \
+      nodelist[:numElem*8], x[:numElem], y[:numElem], z[:numElem],    \
+      xd[:numElem], yd[:numElem], zd[:numElem])
 
   ApplyMaterialPropertiesForElems(domain) ;
 
