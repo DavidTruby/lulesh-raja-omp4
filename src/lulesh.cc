@@ -369,9 +369,13 @@ void InitStressTermsForElems(Domain domain,
    // pull in the stresses appropriate to the hydro integration
    //
 
-  RAJA::forall<ExecPolicy>(0, numElem, [=,p=&domain.p(0),q=&domain.q(0)] (int i) {
+  auto p=&domain.p(0), q=&domain.q(0);
+#pragma omp target data use_device_ptr(p,q,sigxx,sigyy,sigzz)
+  {
+  RAJA::forall<ExecPolicy>(0, numElem, [=] (int i) {
       sigxx[i] = sigyy[i] = sigzz[i] =  - p[i] - q[i] ;
    } );
+  }
 }
 
 /******************************************/
@@ -607,6 +611,7 @@ void IntegrateStressForElems( Domain domain,
 #pragma omp target data map(alloc: fx_elem[:numElem8], fy_elem[:numElem8], fz_elem[:numElem8])
   {
   // loop over all elements
+#pragma omp target data use_device_ptr(nodelist,fx_elem,fy_elem,fz_elem,x,y,z,determ,sigxx,sigyy,sigzz)
   {
   RAJA::forall<ExecPolicy>(0, numElem, [=] (unsigned k) {
       const Index_t* const elemToNode = &nodelist[k*8];
@@ -671,6 +676,8 @@ void IntegrateStressForElems( Domain domain,
 
      // If threaded, then we need to copy the data out of the temporary
      // arrays used above into the final forces field
+#pragma omp target data use_device_ptr(nodeElemStart,nodeElemCornerList,fx_elem,fy_elem,fz_elem,fx,fy,fz)
+  {
      RAJA::forall<ExecPolicy>(0, numNode, [=] (int gnode) {
          Index_t count = nodeElemStart[gnode+1] - nodeElemStart[gnode];
         Index_t *cornerList = &nodeElemCornerList[nodeElemStart[gnode]] ;
@@ -687,6 +694,7 @@ void IntegrateStressForElems( Domain domain,
         fy[gnode] = fy_tmp ;
         fz[gnode] = fz_tmp ;
      } );
+  }
   }
      Release(&fz_elem) ;
      Release(&fy_elem) ;
@@ -874,6 +882,8 @@ void CalcFBHourglassForceForElems( Domain &domain,
   #pragma omp target data \
     map(alloc: fx_elem[:numElem8], fy_elem[:numElem8], fz_elem[:numElem8])
   {
+#pragma omp target data use_device_ptr(nodelist,determ,x8n,y8n,z8n,dvdx,dvdy,dvdz,fx_elem,fy_elem,fz_elem,ss,elemMass,xd,yd,zd,fx,fy,fz,nodeElemStart,nodeElemCornerList)
+    {
     RAJA::forall<ExecPolicy>(0, numElem, [=](unsigned i2) {
     Real_t  gamma[4][8];
 
@@ -1092,6 +1102,7 @@ void CalcFBHourglassForceForElems( Domain &domain,
       fz[n7si2] += hgfz[7];
     }
   });
+
   // storeArray(fx_elem, numElem8, "fx_elem_host", domain);
   // storeArray(fy_elem, numElem8, "fy_elem_host", domain);
   // storeArray(fz_elem, numElem8, "fz_elem_host", domain);
@@ -1130,6 +1141,7 @@ void CalcFBHourglassForceForElems( Domain &domain,
     // compArray(fx, numNode, "fx_host", domain);
     // compArray(fy, numNode, "fy_host", domain);
     // compArray(fz, numNode, "fz_host", domain);
+    }
 
     Release(&fz_elem) ;
     Release(&fy_elem) ;
@@ -1173,6 +1185,8 @@ void CalcHourglassControlForElems(Domain domain,
 
    bool failed = false;
    /* start loop over elements */
+#pragma omp target data use_device_ptr(determ,dvdx,dvdy,dvdz,x8n,y8n,z8n,volo,v,x,y,z,nodelist,ss,elemMass,xd,yd,zd,nodeElemStart,nodeElemCornerList)
+   {
    RAJA::forall<ExecPolicy>(0, numElem, [=,&failed] (int i) {
       Real_t  x1[8],  y1[8],  z1[8] ;
       Real_t pfx[8], pfy[8], pfz[8] ;
@@ -1202,6 +1216,7 @@ void CalcHourglassControlForElems(Domain domain,
         failed = true;
       }
    } );
+   }
    if (failed) {
 #if USE_MPI         
      MPI_Abort(MPI_COMM_WORLD, VolumeError) ;
@@ -1259,11 +1274,14 @@ void CalcVolumeForceForElems(Domain domain)
 
       bool failed = false;
       // check for negative element volume
+#pragma omp target data use_device_ptr(determ)
+      {
       RAJA::forall<ExecPolicy>(0, numElem, [=,&failed] (int k) {
          if (determ[k] <= Real_t(0.0)) {
            failed = true;
          }
       } );
+      }
 
       if(failed) {
         printf("Error in determ\n");
@@ -1294,11 +1312,14 @@ RAJA_STORAGE void CalcForceForNodes(Domain domain)
 #endif  
 
  auto *fx = &domain.fx(0), *fy = &domain.fy(0), *fz = &domain.fz(0);
+#pragma omp target data use_device_ptr(fx, fy, fz)
+ {
   RAJA::forall<ExecPolicy>(0, numNode, [=] (int i) {
      fx[i] = Real_t(0.0) ;
      fy[i] = Real_t(0.0) ;
      fz[i] = Real_t(0.0) ;
   } );
+ }
 
   /* Calcforce calls partial, force, hourq */
   CalcVolumeForceForElems(domain) ;
@@ -1326,11 +1347,14 @@ void CalcAccelerationForNodes(Domain domain, Index_t numNode)
   auto nodalMass=&domain.nodalMass(0),
     xdd=&domain.xdd(0), ydd=&domain.ydd(0), zdd=&domain.zdd(0);
 
+#pragma omp target data use_device_ptr(xdd, ydd, zdd, fx, fy, fz, nodalMass)
+  {
    RAJA::forall<target_exec_policy>(0, numNode, [=] (int i) {
       xdd[i] = fx[i] / nodalMass[i];
       ydd[i] = fy[i] / nodalMass[i];
       zdd[i] = fz[i] / nodalMass[i];
    } );
+  }
 
 }
 
@@ -1344,22 +1368,31 @@ void ApplyAccelerationBoundaryConditionsForNodes(Domain domain)
    auto xdd=&domain.xdd(0), ydd=&domain.ydd(0), zdd=&domain.zdd(0);
    auto symmX=&domain.m_symmX[0], symmY=&domain.m_symmY[0], symmZ=&domain.m_symmZ[0];
 
+#pragma omp target data use_device_ptr(xdd,symmX)
+   {
    if (!domain.symmXempty() != 0) {
       RAJA::forall<target_exec_policy>(int(0), int(numNodeBC), [=] (int i) {
          xdd[symmX[i]] = Real_t(0.0) ;
       } );
    }
+   }
 
+#pragma omp target data use_device_ptr(ydd,symmY)
+   {
    if (!domain.symmYempty() != 0) {
       RAJA::forall<target_exec_policy>(int(0), int(numNodeBC), [=] (int i) {
          ydd[symmY[i]] = Real_t(0.0) ;
       } );
    }
+   }
 
+#pragma omp target data use_device_ptr(zdd,symmZ)
+   {
    if (!domain.symmZempty() != 0) {
       RAJA::forall<target_exec_policy>(int(0), int(numNodeBC), [=] (int i) {
          zdd[symmZ[i]] = Real_t(0.0) ;
       } );
+   }
    }
 
 }
@@ -1374,6 +1407,8 @@ void CalcVelocityForNodes(Domain domain, const Real_t dt, const Real_t u_cut,
   auto yd=&domain.yd(0),ydd=&domain.ydd(0);
   auto zd=&domain.zd(0),zdd=&domain.zdd(0);
 
+#pragma omp target data use_device_ptr(xd, yd, zd, xdd, ydd, zdd)
+  {
    RAJA::forall<target_exec_policy>(0, numNode, [=] (int i) {
      Real_t xdtmp, ydtmp, zdtmp ;
 
@@ -1389,6 +1424,7 @@ void CalcVelocityForNodes(Domain domain, const Real_t dt, const Real_t u_cut,
      if( FABS(zdtmp) < u_cut ) zdtmp = Real_t(0.0);
      zd[i] = zdtmp ;
    } );
+  }
 
 }
 
@@ -1399,11 +1435,14 @@ void CalcPositionForNodes(Domain domain, const Real_t dt, Index_t numNode)
 {
   auto x=&domain.x(0),y=&domain.y(0),z=&domain.z(0),
     xd=&domain.xd(0),yd=&domain.yd(0),zd=&domain.zd(0);
+#pragma omp target data use_device_ptr(x,y,z,xd,yd,zd)
+  {
    RAJA::forall<target_exec_policy>(0, numNode, [=] (int i) {
      x[i] += xd[i] * dt ;
      y[i] += yd[i] * dt ;
      z[i] += zd[i] * dt ;
    } );
+  }
 }
 
 /******************************************/
@@ -1709,6 +1748,8 @@ void CalcKinematicsForElems( Domain domain,
   auto dxx=&domain.dxx(0),dyy=&domain.dyy(0),dzz=&domain.dzz(0);
   auto xd=&domain.xd(0),yd=&domain.yd(0),zd=&domain.zd(0);
   // loop over all elements
+#pragma omp target data use_device_ptr(dxx,dyy,dzz,xd,yd,zd,arealg,volo,vnew,delv,v,nodelist,x,y,z)
+  {
   RAJA::forall<target_exec_policy>(0, numElem, [=,domain=0] (int k) { 
     Real_t B[3][8] ; /** shape function derivatives */
     Real_t D[6] ;
@@ -1768,6 +1809,7 @@ void CalcKinematicsForElems( Domain domain,
     dyy[k] = D[1];
     dzz[k] = D[2];
   } );
+  }
 
 }
 
@@ -1789,6 +1831,8 @@ void CalcLagrangeElements(Domain domain)
 
       CalcKinematicsForElems(domain, deltatime, numElem) ;
 
+#pragma omp target data use_device_ptr(vnew,delv,vdov_v,dxx,dyy,dzz)
+      {
       {
 	Timer t("CalcLagrangeElements_"+std::to_string(numElem));
       // element loop to do some stuff not included in the elemlib function.
@@ -1813,6 +1857,7 @@ void CalcLagrangeElements(Domain domain)
           isValid = false;
         }
       } );
+      }
 
 #pragma omp target exit data map(delete: dxx[:numElem], dyy[:numElem], dzz[:numElem])
       domain.DeallocateStrains();
@@ -1834,6 +1879,8 @@ void CalcMonotonicQGradientsForElems(Domain domain)
         *delx_xi = &domain.delx_xi(0), *delv_xi = &domain.delv_xi(0),
         *delx_eta = &domain.delx_eta(0), *delv_eta = &domain.delv_eta(0);
 
+#pragma omp target data use_device_ptr(x,y,z,xd,yd,zd,volo,vnew,delx_zeta,delv_zeta,delx_xi,delv_xi,delx_eta,delv_eta,nodelist)
+   {
    {
 
      Timer t("CalcMonotonicQGradientsForElems_"+std::to_string(numElem));
@@ -1980,6 +2027,7 @@ void CalcMonotonicQGradientsForElems(Domain domain)
    });
 
    }
+   }
 
 }
 
@@ -2002,6 +2050,7 @@ void CalcMonotonicQRegionForElems(Domain domain,
      vdov=&domain.vdov(0), volo=&domain.volo(0),
      elemMass=&domain.elemMass(0), vnew=&domain.vnew(0), qq=&domain.qq(0), ql=&domain.ql(0);
    
+#pragma omp target data use_device_ptr(delv_xi,delv_eta,delv_zeta,elemBC,lxim,lxip,letam,letap,lzetam,lzetap,delx_xi,delx_eta,delx_zeta,vdov,volo,elemMass,vnew,qq,ql)
       {
     Timer t("CalcMonotonicQRegionForElems");
    RAJA::forall<target_exec_policy>(0, numElem, [=] (int i) {
@@ -2247,11 +2296,15 @@ void CalcQForElems(Domain domain)
 
       /* Don't allow excessive artificial viscosity */
       bool valid = true;
-      RAJA::forall<target_exec_policy>(0, numElem, [q=&domain.q(0), qstop=domain.qstop(), &valid] (int i) {
+      auto q=&domain.q(0);
+#pragma omp target data use_device_ptr(q)
+      {
+        RAJA::forall<target_exec_policy>(0, numElem, [q,qstop=domain.qstop(), &valid] (int i) {
          if ( q[i] > qstop ) {
            valid = false ;
          }
         });
+      }
 
       if(!valid) {
 #if USE_MPI         
@@ -2460,6 +2513,8 @@ void CalcSoundSpeedForElems(Domain domain,
 
   {
     Timer t("CalcSoundSpeedForElems_"+std::to_string(len));
+#pragma omp target data use_device_ptr(regElemList,pbvc,enewc,bvc,pnewc,vnewc,ss)
+    {
     RAJA::forall<target_exec_policy>(0, len, [=] (int i) {
        Index_t ielem = regElemList[i];
        Real_t ssTmp = (pbvc[i] * enewc[i] + vnewc[ielem] * vnewc[ielem] *
@@ -2472,6 +2527,7 @@ void CalcSoundSpeedForElems(Domain domain,
        }
        ss[ielem] = ssTmp ;
      });
+    }
   }
 #pragma omp target exit data map(from: regElemList[:len], pbvc[:len], enewc[:len], bvc[:len], pnewc[:len], vnewc[:numElem], ss[:numElem])
 }
