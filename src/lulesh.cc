@@ -164,7 +164,7 @@ typedef std::chrono::high_resolution_clock Clock;
 
 class Timer {
   // map between kernel name and pair with number of times called and total execution time
-  static std::map<std::string, std::pair<int, double>> kernelTimes;
+  static std::map<std::string, std::pair<int, std::chrono::nanoseconds>> kernelTimes;
   std::chrono::system_clock::time_point tstart;
   std::string kernelName;
 public:
@@ -173,27 +173,26 @@ public:
   }
   ~Timer() {
     auto tend = Clock::now();
-    auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(tend - tstart).count();
+    auto elapsed = tend - tstart;
     const auto &found = Timer::kernelTimes.find(kernelName);
     if (found != Timer::kernelTimes.end()) {
-	int numCalled = found->second.first;
-	numCalled++;
-	double alreadyElapsed = found->second.second;
+	auto alreadyElapsed = found->second.second;
 
-	found->second.first = (found->second.first)+1;
-	found->second.second = alreadyElapsed+elapsed;	
+	found->second.first++;
+	found->second.second = alreadyElapsed+elapsed;
       } else
-        Timer::kernelTimes.emplace(std::make_pair(kernelName, std::make_pair(0, elapsed)));
+        Timer::kernelTimes.emplace(kernelName, std::make_pair(0, elapsed));
   }
 
   static void printKernelStatistics() {
     for(auto &mit : Timer::kernelTimes) {
-      printf("Kernel %s - num called = %d - avg time = %lf\n", mit.first.c_str(), mit.second.first, mit.second.second/(double) mit.second.first);
+      //printf("Kernel %s - num called = %d - avg time = %lf ns\n", mit.first.c_str(), mit.second.first, mit.second.second/(double) mit.second.first);
+      std::cout << "Kernel " << mit.first << " - num called = " << mit.second.first << " - avg time = " << mit.second.second.count() / mit.second.first << "ns\n";
     }
   }
 };
 
-std::map<std::string, std::pair<int, double>> Timer::kernelTimes;
+std::map<std::string, std::pair<int, std::chrono::nanoseconds>> Timer::kernelTimes;
 
 #if USE_OMP
 # include <omp.h>
