@@ -1831,12 +1831,11 @@ void CalcLagrangeElements(Domain domain)
 
       CalcKinematicsForElems(domain, deltatime, numElem) ;
 
-#pragma omp target data use_device_ptr(vnew,delv,vdov_v,dxx,dyy,dzz)
-      {
       {
 	Timer t("CalcLagrangeElements_"+std::to_string(numElem));
       // element loop to do some stuff not included in the elemlib function.
-      RAJA::forall<target_exec_policy>(0, numElem, [=] (int k) {
+  #pragma omp target teams distribute parallel for
+  for (int k = 0; k < numElem; ++k) {
           // calc strain rate and apply as constraint (only done in FB element)
           Real_t vdov = dxx[k] + dyy[k] + dzz[k];
           Real_t vdovthird = vdov/Real_t(3.0) ;
@@ -1846,9 +1845,11 @@ void CalcLagrangeElements(Domain domain)
           dxx[k] -= vdovthird ;
           dyy[k] -= vdovthird ;
           dzz[k] -= vdovthird ;
-        });
+        };
      } // record time
 
+#pragma omp target data use_device_ptr(vnew)
+      {
       bool isValid = true;
         RAJA::forall<target_exec_policy>(0, numElem, [=,&isValid] (int k) {
         // See if any volumes are negative, and take appropriate action.
@@ -1856,7 +1857,7 @@ void CalcLagrangeElements(Domain domain)
         {
           isValid = false;
         }
-      } );
+          });
       }
 
 #pragma omp target exit data map(delete: dxx[:numElem], dyy[:numElem], dzz[:numElem])
@@ -1879,13 +1880,12 @@ void CalcMonotonicQGradientsForElems(Domain domain)
         *delx_xi = &domain.delx_xi(0), *delv_xi = &domain.delv_xi(0),
         *delx_eta = &domain.delx_eta(0), *delv_eta = &domain.delv_eta(0);
 
-#pragma omp target data use_device_ptr(x,y,z,xd,yd,zd,volo,vnew,delx_zeta,delv_zeta,delx_xi,delv_xi,delx_eta,delv_eta,nodelist)
-   {
    {
 
      Timer t("CalcMonotonicQGradientsForElems_"+std::to_string(numElem));
 
-   RAJA::forall<target_exec_policy>(0, numElem, [=] (unsigned i) {
+     #pragma omp target teams distribute parallel for
+     for (int i = 0; i < numElem; ++i) {
       const Real_t ptiny = Real_t(1.e-36) ;
       Real_t ax,ay,az ;
       Real_t dxv,dyv,dzv ;
@@ -2024,9 +2024,8 @@ void CalcMonotonicQGradientsForElems(Domain domain)
       dzv = Real_t(-0.25)*((zv0+zv1+zv5+zv4) - (zv3+zv2+zv6+zv7)) ;
 
       delv_eta[i] = ax*dxv + ay*dyv + az*dzv ;
-   });
-
    }
+
    }
 
 }
@@ -2050,10 +2049,9 @@ void CalcMonotonicQRegionForElems(Domain domain,
      vdov=&domain.vdov(0), volo=&domain.volo(0),
      elemMass=&domain.elemMass(0), vnew=&domain.vnew(0), qq=&domain.qq(0), ql=&domain.ql(0);
    
-#pragma omp target data use_device_ptr(delv_xi,delv_eta,delv_zeta,elemBC,lxim,lxip,letam,letap,lzetam,lzetap,delx_xi,delx_eta,delx_zeta,vdov,volo,elemMass,vnew,qq,ql)
-      {
     Timer t("CalcMonotonicQRegionForElems");
-   RAJA::forall<target_exec_policy>(0, numElem, [=] (int i) {
+    #pragma omp target teams distribute parallel for
+    for (int i = 0; i < numElem; ++i) {
      Index_t ielem = i;
      Real_t qlin, qquad ;
      Real_t phixi, phieta, phizeta ;
@@ -2207,8 +2205,7 @@ void CalcMonotonicQRegionForElems(Domain domain,
 
      qq[ielem] = qquad ;
      ql[ielem] = qlin  ;
-  });
-   }
+  };
 
 }
 
@@ -2513,9 +2510,8 @@ void CalcSoundSpeedForElems(Domain domain,
 
   {
     Timer t("CalcSoundSpeedForElems_"+std::to_string(len));
-#pragma omp target data use_device_ptr(regElemList,pbvc,enewc,bvc,pnewc,vnewc,ss)
-    {
-    RAJA::forall<target_exec_policy>(0, len, [=] (int i) {
+      #pragma omp target teams distribute parallel for
+      for (int i = 0; i < len; ++i) {
        Index_t ielem = regElemList[i];
        Real_t ssTmp = (pbvc[i] * enewc[i] + vnewc[ielem] * vnewc[ielem] *
                        bvc[i] * pnewc[i]) / rho0;
@@ -2526,8 +2522,7 @@ void CalcSoundSpeedForElems(Domain domain,
          ssTmp = SQRT(ssTmp);
        }
        ss[ielem] = ssTmp ;
-     });
-    }
+     };
   }
 #pragma omp target exit data map(from: regElemList[:len], pbvc[:len], enewc[:len], bvc[:len], pnewc[:len], vnewc[:numElem], ss[:numElem])
 }
